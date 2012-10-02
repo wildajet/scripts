@@ -1,0 +1,95 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	Wrapper script that calls the other scripts to remove dovecot, postfix, httpd, and squirrelmail
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+BINDIR=/usr/local/bin
+SPOOLDIR="/var/spool"
+RUNDIR="/var/run"
+DOVENAME="dovecot"
+POSTNAME="postfix"
+HTTPDNAME="httpd"
+BASENAME=""
+BASEDIR=""
+NEW_NAME=""
+IP=""
+EMAIL=""
+HOSTNAME=""
+SPOOLNAME=""
+PRE=""
+PRELIMIT=23
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -p prefix"
+ echo "         -p PREFIX                      # the prefix of each instance name i.e. NAME would become NAMEpostfix and NAMEdovecot must be 13 characters or less"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -p NAME"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 2 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts ":p:d" options; do
+  case $options in
+    p ) PRE=$OPTARG;;
+    d ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+debug "prefix of instances to be removed is set to ,$PRE,"
+
+# prefix cannot be blank it is a required argument
+if [[ "$PRE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE PREFIX for each INSTANCE NAME! \033[0m"
+  usage
+  exit 4
+fi
+
+if [[ "$DEBUG" == "TRUE" ]]; then
+ $BINDIR/rmwebmail -d -a ${PRE}${HTTPDNAME} -n ${PRE}webmail
+ $BINDIR/rmhttpd -d -n ${PRE}${HTTPDNAME}
+ $BINDIR/rmmailserver -d -p $PRE
+else
+ $BINDIR/rmwebmail -a ${PRE}${HTTPDNAME} -n ${PRE}webmail
+ $BINDIR/rmhttpd -n ${PRE}${HTTPDNAME}
+ $BINDIR/rmmailserver -p $PRE
+fi
+
+
+echo -e "\033[1mMake sure that the configuration files are correct \033[1m)"
+echo -e "\033[1mYou should now have ${PRE}${POSTNAME} postfix instance, ${PRE}${DOVENAME} dovecot instance, ${PRE}${HTTPDNAME} instance, and a webmail (Squirrelmail) instance in the document root of the Apache instance. \033[1m)"
+echo -e "\033[0m"
+echo
+
+

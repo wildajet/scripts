@@ -1,0 +1,211 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create a bunch of DNS records
+#
+
+DATE=`date +%Y%m%d`
+SDATE=`date +%Y%m%d_%S`
+CDIR=`pwd`
+ETC=/etc
+DNSBASE="/var/named/chroot"
+MASTERBASE="/var/named/masters"
+SLAVEBASE="/var/named/slaves"
+NET=""
+NET1=""
+NET2=""
+NET3=""
+NCOUNT=""
+REVNET=""
+PRE="srv computer nkwt network net comp hst host svr server"
+SUF="server svr host hst comp net network nkwt srv computer"
+pre_matrix=($(echo "$PRE"))
+suf_matrix=($(echo "$SUF"))
+num_pre=${#pre_matrix[*]}
+num_suf=${#suf_matrix[*]}
+NET=""
+MDOMAIN=""
+DOMAIN=""
+EMAIL=""
+EMAILNAME=""
+EMAILDOMAIN=""
+START=""
+END=""
+REV="TRUE"
+AREC="TRUE"
+DEBUG="FALSE"
+SCRIPT=$0
+
+HOSTNAME=`hostname -s`
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -o MASTERHOST -n NETWORK -f DOMAIN -m EMAIL -s START_SEQ -e END_SEQ"
+ echo "         -o MASTERHOST                  # Domain under $DNSBASE/$MASTERBASE that we should put these record files" 
+ echo "         -n NETWORK                     # first 2 octets of the IP addresses. "
+ echo "         -f DOMAIN                      # Domain name that these records will be authoritative for."
+ echo "         -m CONTACT_EMAIL               # Email that is listed at Arin for this domain"
+ echo "         -s START_SEQ                   # STARTING sequence for the 3 OCTET of the networks"
+ echo "         -e END_SEQ                     # ENDING sequence for the 3 OCTET of the networks"
+ echo "         -r                             # Setup the reverse records only"
+ echo "         -a                             # Setup the A records only"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -o DOMAIN.com -n 192.168 -f DOMAIN.com -m EMAIL -s 192 -e 207 "
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+# determine the number of arguments passed in
+if [[ $# -lt 6 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS (,$#,)! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts "n:o:f:m:s:e:rad" options; do
+  case $options in
+	o ) MDOMAIN=$OPTARG;;
+    n ) NET=$OPTARG;;
+    f ) DOMAIN=$OPTARG;;
+    e ) END=$OPTARG;;
+    m ) EMAIL=$OPTARG;;
+    s ) START=$OPTARG;;
+    r ) AREC="FALSE";;
+    a ) REV="FALSE";;
+    d ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# NETWORK
+if [[ "$NET" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE NETWORK i.e. first 3 octets of the IP! \033[0m"
+  usage
+  exit 4
+fi
+
+#Check the number of periods to make sure they passed in a network and not an IP
+NCOUNT=`echo "$NET" | perl -lne '$c++ while /\./g; END { print $c; }'`
+if [[ $NCOUNT == 3 ]]
+then
+  debug "\033[1;31m YOU ENTERED AN IP vs. A NETWORK, CHOPPING OFF LAST 2 OCTETs FOR YOU :-)! \033[0m"
+  # an IP not a network was passed in, chop off the last octet
+  NET=`echo $NET | cut -d"." -f1,2,3`
+fi
+
+NET1=`echo $NET | cut -d'.' -f1`
+NET2=`echo $NET | cut -d'.' -f2`
+REVNET=$NET2.$NET1
+debug "the NET is set to ,$NET,"
+debug "the REVNET is set to ,$REVNET,"
+debug "the NET1 is set to ,$NET1,"
+debug "the NET2 is set to ,$NET2,"
+
+# Master/owner DOMAIN of all the host records
+if [[ "$MDOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE MASTERDOMAIN for these DNS records! \033[0m"
+  usage
+  exit 5
+fi
+
+if [[ ! -d "$DNSBASE/$MASTERBASE/$MDOMAIN" ]]
+then
+  echo -e "\033[1;31m The records directory $DNSBASE/$MASTERBASE/$MDOMAIN doesn't exist.  Run mkDnsView to set it up! \033[0m"
+  usage
+  exit 6  
+fi
+
+# DOMAIN
+if [[ "$DOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE DOMAIN for these DNS configs and records! \033[0m"
+  usage
+  exit 7
+fi
+# Strip of the extension to get the base name of the domain
+DOMAINBASE=`echo $DOMAIN | cut -d'.' -f1`
+debug "the DOMAINBASE is set to ,$DOMAINBASE,"
+debug "the DOMAIN is set to ,$DOMAIN,"
+
+# EMAIL 
+if [[ "$EMAIL" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE EMAIL address of the Contact for this domain! \033[0m"
+  usage 
+  exit 8
+fi  
+# seperate out the parts of the EMAIL if they put more then just the front name
+EMAILNAME=`echo $EMAIL | cut -d'@' -f1`
+EMAILDOMAIN=`echo $EMAIL | cut -d'@' -f2`
+debug "the EMAIL is set to ,$EMAIL,"
+debug "the EMAILNAME is set to ,$EMAILNAME,"
+debug "the EMAILDOMAIN is set to ,$EMAILDOMAIN,"
+
+
+# START sequence number
+if [[ "$START" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE STARTING number for the 3rd OCTET of the network! \033[0m"
+  usage
+  exit 9
+fi
+debug "the STARTing sequence is set to ,$START,"
+
+# END sequence number
+if [[ "$END" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE ENDing number for the 3rd OCTET of the network! \033[0m"
+  usage
+  exit 10
+fi
+debug "the ENDing sequence is set to ,$END,"
+
+if [[ "$REV" == "FALSE" && "$AREC" == "FALSE" ]]
+then
+  echo -e "\033[1;31m YOU CAN NOT SPECIFY BOTH -r and -a!  ONLY SET 1 or NONE. \033[0m"
+  usage
+  exit 11
+fi
+debug "REV is set to ,$REV,"
+debug "AREC is set to ,$AREC,"
+
+
+for OCT in `seq $START $END`
+do 
+  if [[ "$REV" == "TRUE" && "$AREC" == "TRUE" ]]
+  then
+    /usr/local/bin/addDNSrecords -m $MDOMAIN -n ${NET}.${OCT} -f $DOMAIN -e $EMAIL -p ${pre_matrix[$((RANDOM%num_pre))]} -s ${suf_matrix[$((RANDOM%num_suf))]} 
+  elif [[ "$REV" == "TRUE" && "$AREC" == "FALSE" ]]
+  then
+    /usr/local/bin/addDNSrecords -m $MDOMAIN -n ${NET}.${OCT} -f $DOMAIN -e $EMAIL -p ${pre_matrix[$((RANDOM%num_pre))]} -s ${suf_matrix[$((RANDOM%num_suf))]} -r
+  elif [[ "$REV" == "FALSE" && "$AREC" == "TRUE" ]]
+  then
+    /usr/local/bin/addDNSrecords -m $MDOMAIN -n ${NET}.${OCT} -f $DOMAIN -e $EMAIL -p ${pre_matrix[$((RANDOM%num_pre))]} -s ${suf_matrix[$((RANDOM%num_suf))]} -a
+  else
+    echo "ERROR we should never get here"
+  fi 
+done
+
+echo ""
+echo -e "\033[1mALL the DNS Records have been added\033[0m\033[1m"
+echo -e "\033[0m"

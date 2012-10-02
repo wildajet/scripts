@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to remove files from a directory older then a certain number of days
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+RM=/bin/rm
+FIND=/usr/bin/find
+MV=/bin/mv
+GZIP=/usr/bin/gzip
+LS=/bin/ls
+SOURCEDIR=""
+NUMDAYS=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+if [ -f /usr/local/bin/functions ]
+then
+  . /usr/local/bin/functions
+else
+  echo -e "\033[1;31m MISSING FUNCTIONS FILE /usr/local/bin/functions! \033[0m"
+  exit 1
+fi
+  
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -d dir_full_of_files_2_purge -t days_old_files_need_2_be"
+ echo "         -d dir_full_of_files_2_purge   # Directory to look for files older then X days to purge"
+ echo "         -t days_old_files_need_2_be    # Number of days old the files need to be to be purged"
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d /opt/log -t 7"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 4 ]]; then
+ echo "number of arguments is ,$#,"
+ usage
+ exit 3
+fi
+
+while getopts "d:t:hv" options; do
+  case $options in
+    d ) SOURCEDIR=$OPTARG;;
+    t ) NUMDAYS=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 4;;
+    * ) usage
+          exit 4;;
+  esac
+done
+
+# Source directory can not be blank
+if [[ "$SOURCEDIR" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE SOURCE DIRECTORY! \033[0m"
+  usage
+  exit 5
+elif [ ! -d $SOURCEDIR ]
+then
+  echo -e "\033[1;31m SOURCE DIRECTORY $SOURCEDIR doesn't exist or is not a directory! \033[0m"
+  usage
+  exit 6
+fi
+
+debug "The -d SOURCEDIR is ,$SOURCEDIR,"
+
+# The number of days old the files must be must not be blank
+if [[ "$NUMDAYS" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE NUMBER OF DAYS OLD THE FILES MUST BE! \033[0m"
+  usage
+  exit 7
+fi
+
+debug "The -t NUMDAYS is ,$NUMDAYS,"
+
+# Get list of files to be backed up
+LIST=`$FIND $SOURCEDIR -mtime +${NUMDAYS}`
+
+# Remove all files older then NUMDAYS from the source directory
+if [[ "$LIST" != "" ]]
+then
+  $FIND $SOURCEDIR -mtime +${NUMDAYS} -exec $RM {} \;
+  debug "$LIST files are older then $NUMDAYS and have been removed"
+else
+  debug "No files older then $NUMDAYS.  Nothing to do"
+fi
+

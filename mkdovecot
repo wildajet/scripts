@@ -1,0 +1,260 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create a dovecot IMAP POP3 instance by copying /etc/dovecot directory and making changes
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+SPOOLDIR="/var/spool"
+RUNDIR="/var/run"
+BASENAME="dovecot"
+BASEDIR="$ETC/$BASENAME"
+NEW_NAME=""
+NAMELIMIT=30
+IP=""
+EMAIL=""
+SPOOLNAME=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -s postfix_spool_name -e postmaster_email -i IP -n instance_name"
+ echo "         -n ${BASENAME}_instance_name       # only allowed 20 characters and the last 7 must be dovecot"
+ echo "         -s SPOOL_NAME                  # postfix spool directory name i.e. /var/spool/THIS_NAME not the path just the last part"
+ echo "         -e EMAIL_ADDRESS               # email address for the postmaster" 
+ echo "         -i IP_ADDRESS                  # IP address to have this instance bind to"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -s NAMEpostfix -e EMAIL@DOMAIN.com -i 192.168.200.233 -n NAME${BASENAME}"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 8 ]]; then
+ usage
+ exit 2
+fi
+
+while getopts "n:s:e:i:d" options; do
+  case $options in
+    n ) NEW_NAME=$OPTARG;;
+    s ) SPOOLNAME=$OPTARG;;
+    e ) EMAIL=$OPTARG;;
+    i ) IP=$OPTARG;;
+    d ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# SPOOL directory name
+if [[ "$SPOOLNAME" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE SPOOL DIRECTORY NAME OF THE POSTFIX INSTANCE! \033[0m"
+  usage
+  exit 4
+fi
+debug "the SPOOLNAME is set to ,$SPOOLNAME,"
+
+# EMAIL
+if [[ "$EMAIL" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE EMAIL of the POSTMASTER for this instance! \033[0m"
+  usage
+  exit 5
+fi
+debug "the EMAIL is set to ,$EMAIL,"
+
+# IP
+if [[ "$IP" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP this INSTANCE will use! \033[0m"
+  usage
+  exit 6
+fi
+debug "the IP is set to ,$IP,"
+
+# name cannot be blank it is a required argument
+if [[ "$NEW_NAME" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE $BASENAME INSTANCE NAME! \033[0m"
+  usage
+  exit 7
+fi
+
+# enforce the name restrictions
+enforceNameLength $NEW_NAME $BASENAME $NAMELIMIT
+RETVAL=$?
+if [[ $RETVAL > 0 ]]; then
+ usage
+ exit 8
+fi
+
+debug "$BASENAME instance name is set to ,$NEW_NAME,"
+
+# Check and make sure the name isn't already used
+cd $ETC
+USED=`ls -d *${BASENAME}*`
+debug "list of currently used $BASENAME instance names ,$USED,"
+for NAME in $USED
+do
+ debug "NAME is ,$NAME, and NEW_NAME is ,$NEW_NAME,"
+ if [ "$NEW_NAME" == "$NAME" ]
+ then
+  echo -e "\033[1;31mPICK A NEW NAME that name ($NEW_NAME) is already used!\033[0m"
+  echo "exiting"
+  exit 9
+ fi
+done
+
+debug "checking for template directory"
+# Make sure the template directory 
+if [[ ! -d "${ETC}/${BASENAME}"  ]]
+then
+  echo -e "\033[1;31m THIS MACHINE IS NOT SETUP TO RUN POSTFIX \033[0m"
+  echo -e "\033[1;31m \t${ETC}/${BASENAME} does not exist! \033[0m"
+  exit 10
+fi
+
+NEWDIR="$ETC/$NEW_NAME"
+
+# create the new directory for the configuration files
+mkdir $NEWDIR
+
+# OK, now build out the configuration directory
+cp -a $BASEDIR/* $NEWDIR/
+
+# Back up the original dovecot.conf
+cp -p $NEWDIR/dovecot.conf $NEWDIR/dovecot.conf.$DATE
+
+# make the master socket dir
+mkdir $RUNDIR/$NEW_NAME
+cp -a $RUNDIR/$BASENAME/* $RUNDIR/$NEW_NAME/
+chown root:dovecot $RUNDIR/$NEW_NAME
+
+# zero out the main configuration file and make a new one
+echo -n > $NEWDIR/dovecot.conf
+echo "base_dir = $RUNDIR/$NEW_NAME/" >> $NEWDIR/dovecot.conf
+echo "mail_location = maildir:/home/vmail/%d/%n/Maildir" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "mail_access_groups = vmail" >> $NEWDIR/dovecot.conf
+echo "mail_debug = no" >> $NEWDIR/dovecot.conf
+echo "mail_log_prefix = \"%Us(%u): \"" >> $NEWDIR/dovecot.conf
+echo "mail_log_max_lines_per_sec = 20" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "verbose_proctitle = yes" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "first_valid_uid = 5000" >> $NEWDIR/dovecot.conf
+echo "last_valid_uid = 5000" >> $NEWDIR/dovecot.conf
+echo "first_valid_gid = 5000" >> $NEWDIR/dovecot.conf
+echo "last_valid_gid = 5000" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "maildir_stat_dirs = yes" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "protocols = imap imaps pop3 pop3s" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "protocol imap {" >> $NEWDIR/dovecot.conf
+echo "  listen = $IP:143" >> $NEWDIR/dovecot.conf
+echo "  ssl_listen = $IP:993" >> $NEWDIR/dovecot.conf
+echo "}" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "protocol pop3 {" >> $NEWDIR/dovecot.conf
+echo "  listen = $IP:110" >> $NEWDIR/dovecot.conf
+echo "  ssl_listen = $IP:995" >> $NEWDIR/dovecot.conf
+echo "}" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "login_greeting = Dovecot ready." >> $NEWDIR/dovecot.conf
+echo "login_log_format_elements = user=<%u> method=%m rip=%r lip=%l %c" >> $NEWDIR/dovecot.conf
+echo "login_log_format = %\$: %s" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "protocol lda {" >> $NEWDIR/dovecot.conf
+echo "  log_path = /home/vmail/dovecot-deliver.log" >> $NEWDIR/dovecot.conf
+echo "  postmaster_address = $EMAIL" >> $NEWDIR/dovecot.conf
+echo "  auth_socket_path = $RUNDIR/$NEW_NAME/auth-master" >> $NEWDIR/dovecot.conf
+echo "}" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "auth default {" >> $NEWDIR/dovecot.conf
+echo "  mechanisms = plain login" >> $NEWDIR/dovecot.conf
+echo "  passdb sql {" >> $NEWDIR/dovecot.conf
+echo "    args = $NEWDIR/mysql-dovecot.conf" >> $NEWDIR/dovecot.conf
+echo "  }" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "  userdb passwd {" >> $NEWDIR/dovecot.conf
+echo "  }" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "  userdb static {" >> $NEWDIR/dovecot.conf
+echo "    args = uid=5000 gid=5000 home=/home/vmail/%d/%n allow_all_users=yes" >> $NEWDIR/dovecot.conf
+echo "  }" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "  user = root" >> $NEWDIR/dovecot.conf
+echo "  socket listen {" >> $NEWDIR/dovecot.conf
+echo "    master {" >> $NEWDIR/dovecot.conf
+echo "      path = $RUNDIR/$NEW_NAME/auth-master" >> $NEWDIR/dovecot.conf
+echo "      mode = 0600" >> $NEWDIR/dovecot.conf
+echo "      user = vmail" >> $NEWDIR/dovecot.conf
+echo "    }" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "    client {" >> $NEWDIR/dovecot.conf
+echo "      path = $SPOOLDIR/$SPOOLNAME/private/auth" >> $NEWDIR/dovecot.conf
+echo "      mode = 0660" >> $NEWDIR/dovecot.conf
+echo "      user = postfix" >> $NEWDIR/dovecot.conf
+echo "      group = postfix" >> $NEWDIR/dovecot.conf
+echo "    }" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "  }" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "}" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "dict {" >> $NEWDIR/dovecot.conf
+echo "}" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+echo "plugin {" >> $NEWDIR/dovecot.conf
+echo "}" >> $NEWDIR/dovecot.conf
+echo "" >> $NEWDIR/dovecot.conf
+
+# Create the options file used by the start script
+echo "# Configuration file for the dovecot service." >> $ETC/sysconfig/$NEW_NAME
+echo "" >> $ETC/sysconfig/$NEW_NAME
+echo "#" >> $ETC/sysconfig/$NEW_NAME
+echo "# To pass additional options (for instance, -c configuration file) to the" >> $ETC/sysconfig/$NEW_NAME
+echo "# dovecot binary at startup, set OPTIONS here." >> $ETC/sysconfig/$NEW_NAME
+echo "#" >> $ETC/sysconfig/$NEW_NAME
+echo "OPTIONS=\"-c /etc/$NEW_NAME/dovecot.conf\"" >> $ETC/sysconfig/$NEW_NAME
+
+#copy the start script and then change it
+#copy the start script and then change it
+cp -p $ETC/init.d/$BASENAME $ETC/init.d/$NEW_NAME
+sed -e "s/\/etc\/sysconfig\/$BASENAME/\/etc\/sysconfig\/$NEW_NAME/g" -e "s/prog=$BASENAME/prog=$NEW_NAME/g" -e "s/\/var\/lock\/subsys\/$BASENAME/\/var\/lock\/subsys\/$NEW_NAME/g" --in-place $ETC/init.d/$NEW_NAME
+
+#added it to the services and set it to start on boot 
+chkconfig --add $NEW_NAME
+chkconfig $NEW_NAME on
+
+echo ""
+echo -e "\033[1m$BASENAME instance $NEW_NAME has been created in \033[0m\033[1;31m$NEWDIR\033[0m\033[1m"
+echo -e "\033[1mRun directory has been created \033[0m\033[1;31m$RUNDIR/$NEW_NAME\033[0m\033[1m"
+echo -e "It has also been set to automatically start on boot (\033[0m\033[1;31m$ETC/init.d/$NEW_NAME\033[0m\033[1m)"
+echo -e "\033[1mOptions file has been created \033[0m\033[1;31m$ETC/sysconfig/$NEW_NAME\033[0m\033[1m"
+echo
+echo -e "\033[1mYou may need to edit the configuration file (\033[0m\033[1;31m/etc/$NEW_NAME/dovecot.conf\033[0m\033[1m)"
+echo -e "\033[0m"
+echo
+

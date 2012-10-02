@@ -1,0 +1,187 @@
+# -*-Shell-script-*-
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	functions: This file contains helper functions that I use in other bash scripts
+#
+
+DATE=`date +%Y%m%d`
+DATETIME=`date +%Y%m%d%H%M%S`
+DEBUG="FALSE"
+
+setDebug () {
+ DEBUG=$1
+}
+
+debug () {
+ # function to echo out messages
+ if [[ "$DEBUG" == "TRUE" ]]; then
+  echo -e "$1"
+ fi
+}
+
+enforceRoot () {
+ # make sure they are root otherwise exit
+ if [ `id -u` != "0" ]; then
+         echo -e "\033[1;31mSorry, you must be root to run this script! \033[0m"
+         exit 1
+ fi
+
+}
+
+enforceUser () {
+ if [[ $# < 1 ]]; then
+  return 1
+ fi
+
+ MUSTBE=$1
+ CURRENTUSER=`whoami`
+
+ if [ "$CURRENTUSER" != "$MUSTBE" ]; then
+         echo -e "\033[1;31mSorry, you must be $MUSTBE to run this script! \033[0m"
+         exit 1
+ fi
+}
+
+# Make a backup copy of a file
+backupfile()
+{
+ #make a copy of the file before we change it
+  if [[ $# < 1 ]]; then
+  return 1
+ fi
+ FILE=$1
+
+ # make sure the file exists
+ if [[ ! -e $FILE ]]
+ then
+  debug -e "\033[1;31mFILE ,${FILE}, DOES NOT EXIST!  NOTHING TO BACKUP :-( \033[0m"
+  return 1
+ fi
+
+ # make sure there isn't a backup with todays date already
+ if [[ -e ${FILE}.{$DATE} ]]
+ then
+  debug "backing up ,${FILE}, as ,${FILE}.${DATETIME},"
+  cp -f ${FILE} ${FILE}.${DATETIME}
+ else
+   debug "backing up ,${FILE}, as ,${FILE}.${DATE},"
+  cp -f ${FILE} ${FILE}.${DATE}
+ fi
+ return 0
+}
+
+#
+# How this works:
+# Verify function manages all file copies.
+# Verify accepts two arguments:
+# src:  this is the source file located in the svn repo.
+# dest:  this is the local default copy the src svn version replaces.
+# Verify then does an 'md5sum' and compares the values.
+# if the values match, then the host already has the most
+# recent svn version of the file, if not verify copies the
+# svn version of the file to the correct location $dest,
+# and then pauses for 1 second.
+verify ()
+{
+ if [[ $# < 2 ]]; then
+  return 1
+ fi
+ src="$1"
+ dest="$2"
+ # if the destination file doesn't exist we just copy the source there
+ if [[ ! -e $dst ]]; then
+   backupfile $dest
+   cp -f $src $dest
+   echo "UPDATED $dest"
+ else
+  echo "Checking for $dest updates..."
+  mdsumone=`md5sum $src | awk '{ print $1 }'`
+  mdsumtwo=`md5sum $dest | awk '{ print $1 }'`
+  if [ "$mdsumone" != "$mdsumtwo" ]
+  then
+   backupfile $dest
+   cp -f $src $dest
+   echo "UPDATED $dest"
+  else
+   echo "NO change to $dest required."
+  fi
+ fi
+}
+
+#
+# REPLACE FSTRING WITH RSTRING IN FILE
+#
+replace ()
+{
+ if [[ $# < 3 ]]; then
+  return 1
+ fi
+ FSTRING="$1"
+ RSTRING="$2"
+ FILE="$3"
+ debug "FSTRIN is ,${FSTRING},"
+ debug "RSTRING is ,${RSTRING},"
+ debug "FILE is ,${FILE},"
+ echo "Editing $dest..."
+ sed -e "s/$FSTRING/$RSTRING/g" --in-place ${FILE}
+ sleep 1
+}
+
+enforceNameLength () {
+ # determine the number of arguments passed in
+ if [[ $# < 3 ]]; then
+  return 1
+ fi
+
+ NEW_NAME=$1
+ BASENAME=$2
+ LIMIT=$3
+
+ # Enforce the LIMIT and make sure it ends in the BASENAME
+ NAMELENGTH=${#NEW_NAME}
+ debug "NEW $BASENAME instance name length is ,$NAMELENGTH,"
+ if [[ $NAMELENGTH -gt $LIMIT ]]
+ then
+   echo -e "\033[1;31m NEW $BASENAME instance name must not be longer than $LIMIT characters! \033[0m"
+   return 1
+ fi
+
+ BASELENGTH=${#BASENAME}
+ debug "BASELENGTH is ,$BASELENGTH,"
+ MINUS=$(($BASELENGTH -1))
+ debug "MINUS is ,$MINUS,"
+ OFFSET=$(($NAMELENGTH - $MINUS))
+ debug "OFFSET is ,$OFFSET,"
+ ENDING=`expr substr $NEW_NAME $OFFSET $NAMELENGTH`
+ debug "$BASENAME instance name ending is ,$ENDING,"
+ if [[ "$ENDING" != "$BASENAME" ]]
+ then
+   echo -e "\033[1;31m $BASENAME instance name must end with \"$BASENAME\"! \033[0m"
+   return 1
+ fi
+
+ return 0
+}
+
+randomString () {
+ # use PID of script as starting string
+ str0="$$"
+ # default length is 8
+ LEN=8
+ POS=2 # Starting from position 2
+ if [[ -n $1 ]]; then
+  LEN=$1
+ fi
+
+ str1=$( echo "$str0" | md5sum | md5sum )
+
+ randstring="${str1:$POS:$LEN}"
+
+ echo "$randstring"
+
+}
+

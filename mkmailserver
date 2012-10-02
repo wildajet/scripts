@@ -1,0 +1,145 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create a postfix mail server instance and a dovecot IMAP POP3 instance
+#  	by running the mkpostfix and mkdovecot scripts
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+BINDIR=/usr/local/bin
+SPOOLDIR="/var/spool"
+RUNDIR="/var/run"
+DOVENAME="dovecot"
+POSTNAME="postfix"
+BASENAME=""
+BASEDIR=""
+NEW_NAME=""
+IP=""
+EMAIL=""
+HOSTNAME=""
+SPOOLNAME=""
+PRE=""
+PRELIMIT=23
+DEBUG="FALSE"
+SCRIPT=$0
+
+# make sure they are root otherwise exit
+if [ `id -u` != "0" ]; then
+        echo -e "\033[1;31mSorry, you must be root to run this script! \033[0m"
+        exit 1
+fi
+
+# if -d verbosity will cause the debug statements to print.
+debug () {
+ # function to echo out messages
+ if [[ "$DEBUG" == "TRUE" ]]; then
+  echo -e "$1"
+ fi
+}
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -f hostname -e postmaster_email -i IP -p prefix"
+ echo "         -f HOST_NAME                   # FQDN/hostname the mail server says it is i.e. mail.NAME.com"
+ echo "         -e EMAIL_ADDRESS               # email address for the postmaster" 
+ echo "         -i IP_ADDRESS                  # IP address to have this instance bind to"
+ echo "         -p PREFIX                      # the prefix of each instance name i.e. NAME would become NAMEpostfix and NAMEdovecot must be 13 characters or less"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -f mail.NAME.com -e EMAIL@DOMAIN.com -i 192.168.200.233 -p NAME"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 8 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts ":f:e:i:p:d" options; do
+  case $options in
+    f ) HOSTNAME=$OPTARG;;
+    e ) EMAIL=$OPTARG;;
+    i ) IP=$OPTARG;;
+    p ) PRE=$OPTARG;;
+    d ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# HOSTNAME
+if [[ "$HOSTNAME" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE HOSTNAME this INSTANCE will identify itself as! \033[0m"
+  usage
+  exit 4
+fi
+debug "the HOSTNAME is set to ,$HOSTNAME,"
+
+# EMAIL
+if [[ "$EMAIL" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE EMAIL of the POSTMASTER for this instance! \033[0m"
+  usage
+  exit 5
+fi
+debug "the EMAIL is set to ,$EMAIL,"
+
+# IP
+if [[ "$IP" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP this INSTANCE will use! \033[0m"
+  usage
+  exit 6
+fi
+debug "the IP is set to ,$IP,"
+
+# prefix cannot be blank it is a required argument
+if [[ "$PRE" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE PREFIX for each INSTANCE NAME! \033[0m"
+  usage
+  exit 7
+fi
+
+# Enforce the PRELIMIT character limit
+PRELENGTH=${#PRE}
+debug "prefix length is ,$PRELENGTH,"
+if [[ $PRELENGTH -gt $PRELIMIT ]]
+then
+  echo -e "\033[1;31m prefix length must not be longer than $PRELIMIT characters! \033[0m"
+  usage
+  exit 8
+fi
+debug "the prefix is set to ,$PRE,"
+
+if [[ "$DEBUG" == "TRUE" ]]; then
+   $BINDIR/mkpostfix -d -i $IP -f $HOSTNAME -n ${PRE}${POSTNAME}
+   $BINDIR/mkdovecot -d -s ${PRE}${POSTNAME} -e $EMAIL -i $IP -n ${PRE}${DOVENAME}
+else
+   $BINDIR/mkpostfix -i $IP -f $HOSTNAME -n ${PRE}${POSTNAME}
+   $BINDIR/mkdovecot -s ${PRE}${POSTNAME} -e $EMAIL -i $IP -n ${PRE}${DOVENAME}
+fi
+
+# add the dovecot deliver line to the postfix master.cf file
+echo "dovecot   unix  -       n       n       -       -       pipe" >> $ETC/${PRE}${POSTNAME}/master.cf
+echo "    flags=DRhu user=vmail:vmail argv=/usr/libexec/dovecot/deliver -c /etc/${PRE}${DOVENAME}/dovecot.conf -d \${recipient}" >> $ETC/${PRE}${POSTNAME}/master.cf
+
+echo -e "\033[1mMake sure that the configuration files are correct \033[1m)"
+echo -e "\033[1mYou should now have ${PRE}${POSTNAME} postfix instance and ${PRE}${DOVENAME} dovecot instance \033[1m)"
+echo -e "\033[0m"
+echo
+

@@ -1,0 +1,209 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to kick of the docroot-rsync for a given environement
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+LOCALDIR=""
+LOCKPATH="/var/www"
+LOCKFILE=""
+ALLENVS="DEV, QA, STAGE, or PROD"
+FROMENV=""
+TOENV=""
+PRODSUPHOME="/home/PRODSUPUPLOADS"
+APACHE="httpd"
+BASEPATH="/var/www"
+ENVDIR=""
+
+DEVFROMSERVER="DEVSERVER"
+QAFROMSERVER="QASERVER"
+STAGEFROMSERVER="STAGESERVER"
+PRODFROMSERVER="PRODSERVER"
+
+DEVTOSERVERS="DEVSERVER"
+QATOSERVERS="QASERVER"
+STAGETOSERVERS="STAGESERVER"
+PRODTOSERVERS="PRODSERVER1 PRODSERVER2"
+
+FROMSERVER=""
+TOSERVERS=""
+
+EXE=/usr/local/bin/docroot-rsync
+RSYNC=/usr/bin/rsync
+CHMOD=/bin/chmod
+CHOWN=/bin/chown
+CP=/bin/cp
+RM=/bin/rm
+FIND=/usr/bin/find
+MKDIR=/bin/mkdir
+ECHO=/bin/echo
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+if [[ -e /usr/local/bin/functions ]]
+then
+ . /usr/local/bin/functions
+else
+ $ECHO -e "\033[1;31m missing the /usr/local/bin/functions file.  exiting \033[0m"
+ exit 1
+fi
+
+# make sure script was started by root or exit
+enforceRoot 
+
+#usage directions
+usage () {
+ $ECHO ""
+ $ECHO "Usage: $SCRIPT [options] -f FROM_ENVIRONMENT -t TO_ENVIRONMENT"
+ $ECHO "         -f FROM_ENVIRONMENT            # ENVIRONMENT ($ALLENVS) that we pull the images from "
+ $ECHO "         -t TO_ENVIRONMENT              # ENVIRONMENT ($ALLENVS) that we promote the images to"
+ $ECHO "         -v verbose (debug)             # default is off"
+ $ECHO "         -h display this help message"
+ $ECHO ""
+ $ECHO " i.e. $SCRIPT -v -f DEV -t QA" 
+ $ECHO ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 4 ]]; then
+ $ECHO -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ $ECHO "Number of arguments passed in is ,$#,"
+ usage
+ exit 3
+fi
+
+while getopts ":f:t:vh" options; do
+  case $options in
+    f ) FROMENV=`$ECHO $OPTARG | tr [:lower:] [:upper:]`;;
+    t ) TOENV=`$ECHO $OPTARG | tr [:lower:] [:upper:]`;;
+    v ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 4;;
+    * ) usage
+          exit 4;;
+  esac
+done
+
+debug "FROMENV = ,$FROMENV,"
+debug "TOENV   = ,$TOENV,"
+
+if [[ "$FROMENV" == "" ]]
+then
+  $ECHO -e "\033[1;31m YOU MUST SPECIFY THE FROM_ENVIRONMENT ($ALLENVS) WE ARE TO PULL FROM! \033[0m"
+  usage
+  exit 5
+fi
+
+if [[ "$TOENV" == "" ]]
+then
+  $ECHO -e "\033[1;31m YOU MUST SPECIFY THE TO_ENVIRONMENT ($ALLENVS) WE ARE TO PUSH TO! \033[0m"
+  usage
+  exit 6
+fi
+
+#FROM SERVER needs to be set to one server
+case $FROMENV in
+  DEV ) FROMSERVER=$DEVFROMSERVER;;
+  QA ) FROMSERVER=$QAFROMSERVER;;
+  STAGE ) FROMSERVER=$STAGEFROMSERVER;;
+  PROD ) FROMSERVER=$PRODFROMSERVER;;
+  * ) $ECHO -e "\033[1;31m YOU MUST SPECIFY THE FROM_ENVIRONMENT ($ALLENVS) WE ARE TO PULL FROM! \033[0m"
+      usage
+      exit 7;;
+esac
+
+# TO servers may be multiple servers
+case $TOENV in
+  DEV ) TOSERVERS=$DEVTOSERVERS;;
+  QA ) TOSERVERS=$QATOSERVERS;;
+  STAGE ) TOSERVERS=$STAGETOSERVERS;;
+  PROD ) TOSERVERS=$PRODTOSERVERS;;
+  * ) $ECHO -e "\033[1;31m YOU MUST SPECIFY THE TO_ENVIRONMENT ($ALLENVS) WE ARE TO PUSH TO! \033[0m"
+      usage
+      exit 8;;
+esac
+
+#Make sure the SERVERS variable is set
+if [[ "$FROMSERVER" == "" ]]
+then
+  $ECHO -e "\033[1;31m UNKNOWN ERROR!  SOMEHOW FROMSERVER ISN'T SET! \033[0m"
+  exit 8
+fi
+debug "SERVERS is set to ,$SERVERS,"
+
+#check for lock file so we don't run if someone is already running this script
+FROMLOCKFILE="$LOCKPATH/imagesync.$FROMENV"
+TOLOCKFILE="$LOCKPATH/imagesync.$TOENV"
+debug "FROMLOCKFILE is set to ,$FROMLOCKFILE, and TOLOCKFILE is set to "
+
+# Make sure someone isn't already running this syncing all the environments
+if [[ -f $LOCKPATH/imagesync.ALL ]]
+then
+  $ECHO -e "\033[1;31m Someone is already syncing up ALL the environments!\n Please Try again Later.\n  If you think you have gotten this message in error, feal free to contact your friendly neighborhood Unix admin :-D. \033[0m"
+  exit 9
+fi
+
+if [[ -f $FROMLOCKFILE ]]
+then
+  $ECHO -e "\033[1;31m Someone is already syncing up the $FROMENV environment!\n Please Try again Later.\n  If you think you have gotten this message in error, feal free to contact your friendly neighborhood Unix admin :-D. \033[0m"
+  exit 10
+fi
+
+if [[ -f $TOLOCKFILE ]]
+then
+  $ECHO -e "\033[1;31m Someone is already syncing up the $TOENV environment!\n Please Try again Later.\n  If you think you have gotten this message in error, feal free to contact your friendly neighborhood Unix admin :-D. \033[0m"
+  exit 11
+fi
+
+touch $FROMLOCKFILE
+touch $TOLOCKFILE
+debug "FROMLOCKFILE ,$FROMLOCKFILE, and TOLOCKFILE ,$TOLOCKFILE, created"
+
+FROMENVDIR=$BASEPATH/$FROMENV/$APACHE
+debug "FROMENVDIR is set to ,$FROMENVDIR,"
+
+# if the apache instance directory is not there create it
+if [[ ! -d $FROMENVDIR ]]
+then
+  $MKDIR -p $FROMENVDIR
+  $CHOWN -R webadmin:webdeploy $FROMENVDIR
+  $CHMOD -R 777 $FROMENVDIR
+  $CHMOD g+s $FROMENVDIR
+  debug "Just created ,$FROMENVDIR, chowned it and chmod'd it."
+fi
+
+debug "pulling down files from $FROMENV ($FROMSERVER) to $FROMENVDIR"
+debug "about to $EXE -s \"$FROMSERVER\" -l $FROMENVDIR -p PULL"
+$EXE -s $FROMSERVER -l $FROMENVDIR -p PULL
+debug "finished rsync to local dir $FROMENVDIR "
+
+for SERVER in $TOSERVERS
+do
+ debug "pushing files from $FROMENVDIR to $TOENV ($TOSERVERS)"
+ debug "about to $EXE -s $SERVER -l $FROMENVDIR -p PUSH"
+ $EXE -s $SERVER -l $FROMENVDIR -p PUSH
+done
+
+if [[ "$TOENV" == "PROD" ]]; then
+ # Since we are changing production we need to make sure PROD supports home is kept in sync
+ $RSYNC -avz --stats $FROMENVDIR/ $PRODSUPHOME/$APACHE/
+fi
+
+$RM -rf $FROMENVDIR
+debug "just removed $FROMENVDIR"
+
+# remove the lockfile
+$RM -f $FROMLOCKFILE
+debug "removed lockfile $FROMLOCKFILE"
+
+# remove the lockfile
+$RM -f $TOLOCKFILE
+debug "removed lockfile $TOLOCKFILE"

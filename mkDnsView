@@ -1,0 +1,379 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create a DNS config and record files
+#
+
+DATE=`date +%Y%m%d`
+SDATE=`date +%Y%m%d_%S`
+CDIR=`pwd`
+ETC=/etc
+DNSBASE="/var/named/chroot"
+MASTERBASE="/var/named/masters"
+SLAVEBASE="/var/named/slaves"
+NET=""
+NET1=""
+NET2=""
+NET3=""
+NCOUNT=""
+REVNET=""
+DNS1=""
+DNS2=""
+MAIL=""
+WEB=""
+DOMAIN=""
+DOMAINBASE=""
+TLD=""
+ACL=""
+EMAIL=""
+EMAILNAME=""
+EMAILDOMAIN=""
+SLAVE="FALSE"
+MYIP=""
+NS1IP=""
+NS2IP=""
+MAILIP="NOT"
+WEBIP="NOT"
+DEBUG="FALSE"
+SCRIPT=$0
+
+HOSTNAME=`hostname -s`
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -n NETWORK -f DOMAIN -e CONTACT_EMAIL -p NS1IP -b NS2IP"
+ echo "         -n NETWORK                     # first 3 octets of the IP addresses.  Last octets will be "
+ echo "         -f DOMAIN                      # Domain name that these records will be authoritative for."
+ echo "         -e CONTACT_EMAIL               # Email that is listed at Arin for this domain"
+ echo "         -m MAILIP                      # THE IP to set for the mail.domain record"
+ echo "         -w WEBIP                       # THE IP to set for the domain and www record"
+ echo "         -p NS1IP                       # THE IP to set for the ns1.domain record"
+ echo "         -b NS2IP                       # THE IP to set for the ns2.domain record"
+ echo "         -s SLAVE                       # Set this DNS server to be a slave to the other one.  Defaults to false"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -n 192.168.200 -f DOMAIN.com -e EMAIL -p 192.168.200.250 -b 192.168.200.251"
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+# determine the number of arguments passed in
+if [[ $# -lt 6 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS (,$#,)! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts "n:f:e:i:m:w:p:b:sd" options; do
+  case $options in
+    n ) NET=$OPTARG;;
+    f ) DOMAIN=$OPTARG;;
+    e ) EMAIL=$OPTARG;;
+    m ) MAILIP=$OPTARG;;
+    w ) WEBIP=$OPTARG;;
+    p ) NS1IP=$OPTARG;;
+    b ) NS2IP=$OPTARG;;
+    s ) SLAVE="TRUE";;
+    d ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+debug "SLAVE is set to ,$SLAVE,"
+
+# NETWORK
+if [[ "$NET" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE NETWORK i.e. first 3 octets of the IP! \033[0m"
+  usage
+  exit 4
+fi
+
+#Check the number of periods to make sure they passed in a network and not an IP
+NCOUNT=`echo "$NET" | perl -lne '$c++ while /\./g; END { print $c; }'`
+if [[ $NCOUNT == 3 ]]
+then
+  debug "\033[1;31m YOU ENTERED AN IP vs. A NETWORK, CHOPPING OFF LAST OCTET FOR YOU :-)! \033[0m"
+  # an IP not a network was passed in, chop off the last octet
+  NET=`echo $NET | cut -d"." -f1,2,3`
+fi
+
+NET1=`echo $NET | cut -d'.' -f1`
+NET2=`echo $NET | cut -d'.' -f2`
+NET3=`echo $NET | cut -d'.' -f3`
+REVNET=$NET3.$NET2.$NET1
+debug "the NET is set to ,$NET,"
+debug "the REVNET is set to ,$REVNET,"
+debug "the NET1 is set to ,$NET1,"
+debug "the NET2 is set to ,$NET2,"
+debug "the NET3 is set to ,$NET3,"
+
+# DOMAIN
+if [[ "$DOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE DOMAIN for these DNS configs and records! \033[0m"
+  usage
+  exit 5
+fi
+# Strip of the extension to get the base name of the domain
+DOMAINBASE=`echo $DOMAIN | cut -d'.' -f1`
+TLD=`echo $DOMAIN | cut -d'.' -f2`
+debug "the DOMAINBASE is set to ,$DOMAINBASE,"
+debug "the TLD is set to ,$TLD,"
+debug "the DOMAIN is set to ,$DOMAIN,"
+
+# EMAIL
+if [[ "$EMAIL" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE EMAIL address of the Contact for this domain! \033[0m"
+  usage
+  exit 6
+fi
+# seperate out the parts of the EMAIL if they put more then just the front name
+EMAILNAME=`echo $EMAIL | cut -d'@' -f1`
+EMAILDOMAIN=`echo $EMAIL | cut -d'@' -f2`
+debug "the EMAIL is set to ,$EMAIL,"
+debug "the EMAILNAME is set to ,$EMAILNAME,"
+debug "the EMAILDOMAIN is set to ,$EMAILDOMAIN,"
+
+#if the email name and domain is the same then they didn't specify the domain so assume the DNS domain
+if [[ "$EMAILNAME" == "$EMAILDOMAIN" ]]; then
+  EMAILDOMAIN="$DOMAIN"
+fi
+
+# MAILIP
+if [[ "$MAILIP" != "NOT" && "$MAILIP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP for mail.domain record with the -m option! \033[0m"
+  usage
+  exit 7
+else
+ debug "MAILIP is set to ,$MAILIP,"
+ # grab the last octet
+ MAIL=`echo $MAILIP | cut -d"." -f4`
+ debug "MAIL is set to ,$MAIL,"
+fi
+
+# WEBIP
+if [[ "$WEBIP" != "NOT" && "$WEBIP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP for domain and www record with the -w option! \033[0m"
+  usage
+  exit 8
+else
+ debug "WEBIP is set to ,$WEBIP,"
+ # grab the last octet
+ WEB=`echo $WEBIP | cut -d"." -f4`
+ debug "WEB is set to ,$WEB,"
+fi
+
+# NS1IP
+if [[ "$NS1IP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP for ns1.domain record! \033[0m"
+  usage
+  exit 9
+fi
+debug "NS1IP is set to ,$NS1IP,"
+# grab the last octet
+DNS1=`echo $NS1IP | cut -d"." -f4`
+debug "DNS1 is set to ,$DNS1,"
+
+# NS2IP
+if [[ "$NS2IP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP for ns2.domain record! \033[0m"
+  usage
+  exit 10
+fi
+debug "NS2IP is set to ,$NS2IP,"
+# grab the last octet
+DNS2=`echo $NS2IP | cut -d"." -f4`
+debug "DNS2 is set to ,$DNS2,"
+
+if [[ "$SLAVE" == "TRUE" ]]
+then
+  MYIP=$NS2IP
+else
+  MYIP=$NS1IP
+fi
+
+# echo out the configuration file
+ACL=${DOMAINBASE}${TLD}
+
+echo "" >> $DNSBASE/etc/$DOMAIN.conf
+if [[ "$SLAVE" == "TRUE" ]]; then
+  echo "acl \"${ACL}\"        { ${MYIP}/32; };" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "masters \"${ACL}-masters\" {" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "        $NET.$DNS1;" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "};" >> $DNSBASE/etc/$DOMAIN.conf
+else
+  echo "acl \"${ACL}\"        { ${MYIP}/32; };" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "" >> $DNSBASE/etc/$DOMAIN.conf
+fi
+echo "view \"$DOMAIN\" {" >> $DNSBASE/etc/$DOMAIN.conf
+echo "        match-destinations { \"${ACL}\"; };" >> $DNSBASE/etc/$DOMAIN.conf
+echo "" >> $DNSBASE/etc/$DOMAIN.conf
+echo "        zone \"$DOMAIN\" IN {" >> $DNSBASE/etc/$DOMAIN.conf
+if [[ "$SLAVE" == "TRUE" ]]; then
+  echo "                type slave;" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                file \"slaves/$DOMAIN/$DOMAIN.hosts\";" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                masters { ${ACL}-masters; };" >> $DNSBASE/etc/$DOMAIN.conf
+else
+  echo "                type master;" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                file \"masters/$DOMAIN/$DOMAIN.hosts\";" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                allow-update { none; };" >> $DNSBASE/etc/$DOMAIN.conf
+fi
+echo "        };" >> $DNSBASE/etc/$DOMAIN.conf
+echo "" >> $DNSBASE/etc/$DOMAIN.conf
+echo "        zone \"$REVNET.in-addr.arpa.\" IN {" >> $DNSBASE/etc/$DOMAIN.conf
+if [[ "$SLAVE" == "TRUE" ]]; then
+  echo "                type slave;" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                file \"slaves/$DOMAIN/$REVNET.in-addr.arpa.hosts\";" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                masters { ${ACL}-masters; };" >> $DNSBASE/etc/$DOMAIN.conf
+else
+  echo "                type master;" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                file \"masters/$DOMAIN/$REVNET.in-addr.arpa.hosts\";" >> $DNSBASE/etc/$DOMAIN.conf
+  echo "                allow-update { none; };" >> $DNSBASE/etc/$DOMAIN.conf
+fi
+echo "        };" >> $DNSBASE/etc/$DOMAIN.conf
+echo "" >> $DNSBASE/etc/$DOMAIN.conf
+echo "        zone \".\" IN {" >> $DNSBASE/etc/$DOMAIN.conf
+echo "                type hint;" >> $DNSBASE/etc/$DOMAIN.conf
+echo "                file \"named.root.hints\";" >> $DNSBASE/etc/$DOMAIN.conf
+echo "        };" >> $DNSBASE/etc/$DOMAIN.conf
+echo "" >> $DNSBASE/etc/$DOMAIN.conf
+echo "};" >> $DNSBASE/etc/$DOMAIN.conf
+echo "" >> $DNSBASE/etc/$DOMAIN.conf
+	
+#set the right ownership of this new configuration file
+chown root:named $DNSBASE/etc/$DOMAIN.conf
+
+#backup the named.conf file before we modify it
+cp $DNSBASE/etc/named.conf $DNSBASE/etc/Archive/named.conf.$SDATE 
+
+#put the include line into the named.conf file
+echo "include \"/etc/$DOMAIN.conf\";" >> $DNSBASE/etc/named.conf
+
+# create the directory to put the record files in
+if [[ "$SLAVE" == "TRUE" ]]; then
+  mkdir $DNSBASE/$SLAVEBASE/$DOMAIN
+  chown root:named $DNSBASE/$SLAVEBASE/$DOMAIN
+  chmod g+ws $DNSBASE/$SLAVEBASE/$DOMAIN
+else
+  mkdir $DNSBASE/$MASTERBASE/$DOMAIN
+  chown root:named $DNSBASE/$MASTERBASE/$DOMAIN
+  chmod g+ws $DNSBASE/$MASTERBASE/$DOMAIN
+fi
+
+# create the record files only if we are the master
+if [[ "$SLAVE" == "FALSE" ]]; then
+  # domain record file 
+  echo "\$TTL 1h" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "; Origin added to names not ending" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  echo "; in a dot: $DOMAIN" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "@ IN SOA ns1.$DOMAIN. $EMAILNAME.$EMAILDOMAIN. (" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts  
+  echo "		${DATE}01         ; Serial" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "		1h       	  ; Refresh after 3 hours" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  echo "		30m      	  ; Retry after 1 hour" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "		1d       	  ; Expire after 1 week" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  echo "		1h )     	  ; Negative caching TTL of 1 hour" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "; Name servers (The name '@' is implied)" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts  
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "	IN NS  ns1.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  echo "	IN NS  ns2.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "; MX records (The name '@' is implied)" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  if [[ "$MAILIP" != "NOT" ]]
+  then
+   echo "	IN MX 10 mail" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  fi 
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "; Address for the domain @ is implied" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  if [[ "$WEBIP" != "NOT" ]]
+  then
+   echo "	IN A $WEBIP" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  fi
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "; Addresses for the canonical names" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts  
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "ns1     IN A $NS1IP" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  echo "ns2     IN A $NS2IP" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  if [[ "$MAILIP" != "NOT" ]]
+  then
+   echo "mail	IN A $MAILIP" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  fi
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo "; Aliases" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts
+  if [[ "$WEBIP" != "NOT" ]]
+  then
+   echo "www	IN CNAME @" >> $DNSBASE/$MASTERBASE/$DOMAIN/$DOMAIN.hosts 
+  fi
+
+  # reverse record file
+  echo "\$TTL 1h" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "; Origin added to names not ending" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "; in a dot: $REVNET.in-addr.arpa" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "@ IN SOA ns1.$DOMAIN. $EMAILNAME.$EMAILDOMAIN. (" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "        ${DATE}01       ; Serial" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "        1h       	; Refresh after 3 hours" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "        30m      	; Retry after 1 hour" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "        1d       	; Expire after 1 week" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "        1h )     	; Negative caching TTL of 1 hour" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "; Name servers (The name '@' is implied)" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "	IN NS  ns1.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "	IN NS  ns2.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "; Addresses point to canonical names" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo ";" >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "$DNS1	IN PTR ns1.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  echo "$DNS2	IN PTR ns2.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  if [[ "$MAILIP" != "NOT" ]]
+  then
+   echo "$MAIL	IN PTR mail.$DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  fi
+  if [[ "$WEBIP" != "NOT" ]]
+  then
+   echo "$WEB	IN PTR $DOMAIN." >> $DNSBASE/$MASTERBASE/$DOMAIN/$REVNET.in-addr.arpa.hosts
+  fi
+
+  # set the right permissions on the files
+  chown root:named $DNSBASE/$MASTERBASE/$DOMAIN/*.hosts
+
+fi
+
+# restart the named (DNS) service
+#service named restart
+
+echo ""
+echo -e "\033[1mAdded domain $DOMAIN to the DNS server and restarted the named (DNS) service.\033[0m\033[1m"
+echo
+echo -e "\033[0m"
+echo
+

@@ -1,0 +1,102 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+#       Script to run remote commands on a server via SSH.
+#	This is a very rough script that could use a lot of work
+#
+#
+DATE=`date +%Y%m%d`
+DATETIME=`date +%Y%m%d%H%M%S`
+
+#source in all the servers
+. /usr/local/bin/serverlist
+
+DEFAULTSERVERS="$ALLSERVERS"
+
+DEFAULTSSHUSER="USERNAME"
+
+#set the variables blank to start
+SERVERS=""
+SSHUSER=""
+CMD=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+
+ echo ""
+ echo "Usage: $0 [options] -c CMD2RUN"
+ echo "		-c CMD2RUN       			# command to execute on the remote server"
+ echo "		-s \"server1 [server2 ... serverN]]\" 	# defaults to all servers in the serverlist file"
+ echo "		-u user_to_SSH_as			# defaults to $DEFAULTSSHUSER"
+ echo "			NOTE: user must have sudo to root without a password privileges on remote server"
+ echo "		-v verbose				# default is off"
+ echo "		-h display this help message				  "
+ echo ""
+ echo "i.e. $SCRIPT -s \"server1 server2\" -c \"netstat -r\""
+ echo ""
+
+}
+
+# determine the number of arguments passed in
+if [[ $# < 1 ]]; then
+ usage
+ exit 2
+fi
+
+while getopts ":c:s:u:v" options; do
+  case $options in
+    c ) CMD=$OPTARG;;
+    s ) SERVERS=$OPTARG;;
+    u ) SSHUSER=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+
+# set default value
+if [[ "$SERVERS" == "" ]]; then
+  SERVERS="$DEFAULTSERVERS"
+fi
+
+debug "remote servers are set to $SERVERS"
+
+# set default value
+if [[ "$SSHUSER" == "" ]]; then
+  SSHUSER="$DEFAULTSSHUSER"
+fi
+
+debug "USER to ssh as is set to $SSHUSER"
+
+SU="/bin/su - $SSHUSER"
+debug "SUDO is set to ,$SUDO,"
+
+SUDO="sudo"
+debug "SU is set to ,$SU,"
+
+CDIR=`pwd`
+debug "current directory is $CDIR"
+
+for s in $SERVERS
+ do
+  echo "$s ($CMD):"
+  $SU -c "ssh -t $SSHUSER@$s \" $SUDO $CMD; exit\""
+  echo ""
+done
+

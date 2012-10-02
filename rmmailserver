@@ -1,0 +1,92 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to remove a postfix and dovecot IMAP POP3 server instance
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+BINDIR=/usr/local/bin
+SPOOLDIR="/var/spool"
+RUNDIR="/var/run"
+DOVENAME="dovecot"
+POSTNAME="postfix"
+BASENAME=""
+BASEDIR=""
+NEW_NAME=""
+IP=""
+EMAIL=""
+SPOOLNAME=""
+PRE=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# make sure they are root otherwise exit
+if [ `id -u` != "0" ]; then
+        echo -e "\033[1;31mSorry, you must be root to run this script! \033[0m"
+        exit 1
+fi
+
+# if -d verbosity will cause the debug statements to print.
+debug () {
+ # function to echo out messages
+ if [[ "$DEBUG" == "TRUE" ]]; then
+  echo -e "$1"
+ fi
+}
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -p prefix"
+ echo "         -p PREFIX                      # the prefix of each instance name i.e. NAME would become NAMEpostfix and NAMEdovecot must be 13 characters or less"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -p NAME"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 1 ]]; then
+ usage
+ exit 2
+fi
+
+while getopts ":p:d" options; do
+  case $options in
+    p ) PRE=$OPTARG;;
+    d ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+debug "prefix of instances to be removed is set to ,$PRE,"
+
+# prefix cannot be blank it is a required argument
+if [[ "$PRE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE PREFIX for each INSTANCE NAME! \033[0m"
+  usage
+  exit 4
+fi
+
+
+if [[ "$DEBUG" == "TRUE" ]]; then
+   $BINDIR/rmpostfix -d -n ${PRE}${POSTNAME}
+   $BINDIR/rmdovecot -d -n ${PRE}${DOVENAME}
+else
+   $BINDIR/rmpostfix -n ${PRE}${POSTNAME}
+   $BINDIR/rmdovecot -n ${PRE}${DOVENAME}
+fi
+
+

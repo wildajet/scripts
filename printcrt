@@ -1,0 +1,75 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	Script to print out the details of a PEM or DER format SSL CERTIFICATE
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+DEBUG="FALSE"
+SCRIPT=$0
+CERTFILE=""
+TYPE=""
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -f CERTIFICATE_FILE -t TYPE"
+ echo "         -f CERTIFICATE_FILE            # SSL certificate file in either ."
+ echo "         -t TYPE                        # either PEM or DER"
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -v -f domain.tld.crt.pem -t PEM"
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+# determine the number of arguments passed in
+if [[ $# -lt 4 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS (,$#,)! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts "f:t:v" options; do
+  case $options in
+    f ) CERTFILE=$OPTARG;;
+    t ) TYPE=`echo "$OPTARG" | tr "[[:lower:]]" "[[:upper:]]"`;;
+    v ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+if [[ ! -e "$CERTFILE" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE CERTIFICATE FILE! \033[0m"
+  usage
+  exit 4
+fi
+debug "CERTFILE is ,$CERTFILE,"
+
+if [[ "$TYPE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE TYPE of CERTIFICATE FILE! \033[0m"
+  usage
+  exit 5
+fi
+debug "TYPE is ,$TYPE,"
+
+openssl x509 -in $CERTFILE -inform $TYPE -text

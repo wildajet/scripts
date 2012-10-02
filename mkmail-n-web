@@ -1,0 +1,198 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	Wrapper script that calls the other scripts to make dovecot, postfix, httpd, and squirrelmail
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+BINDIR=/usr/local/bin
+SPOOLDIR="/var/spool"
+RUNDIR="/var/run"
+DOVENAME="dovecot"
+POSTNAME="postfix"
+HTTPDNAME="httpd"
+BASENAME=""
+BASEDIR=""
+NEW_NAME=""
+IP=""
+WIP=""
+EMAIL=""
+HOSTNAME=""
+DOMAIN=""
+SPOOLNAME=""
+PRE=""
+PRELIMIT=23
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -f domain -m hostname -e postmaster_email -i IP -p prefix"
+ echo "         -f DOMAIN                      # DOMAIN that the mail and website will host i.e. DOMAIN.com"
+ echo "         -m MAIL_SERVER_NAME            # FQDN/hostname the mail server says it is i.e. mail.  We will append the domain to it"
+ echo "         -e EMAIL_ADDRESS               # email address for the postmaster we will append the domain to it."
+ echo "         -i IP_ADDRESS                  # IP address to have this mail instance bind to"
+ echo "         -w IP_ADDRESS                  # IP address to have this web instance bind to"
+ echo "         -p PREFIX                      # the prefix of each instance name i.e. NAME would become NAMEpostfix and NAMEdovecot must be $PRELIMIT characters or less"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -f DOMAIN.com -m mail -e EMAIL -i 192.168.200.233 -w 192.168.200.234 -p NAME"
+ echo ""
+}
+
+# determine the name of the new postfix instance
+if [[ $# -lt 8 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS ,$#, needed more then 8! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts ":m:f:e:i:w:p:d" options; do
+  case $options in
+    f ) DOMAIN=$OPTARG;;
+    m ) HOSTNAME=$OPTARG;;
+    e ) EMAIL=$OPTARG;;
+    i ) IP=$OPTARG;;
+    w ) WIP=$OPTARG;;
+    p ) PRE=$OPTARG;;
+    d ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# DOMAIN
+if [[ "$DOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE DOMAIN this INSTANCE will SERVE! \033[0m"
+  usage
+  exit 4
+fi
+debug "the DOMAIN is set to ,$DOMAIN,"
+
+# HOSTNAME
+if [[ "$HOSTNAME" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE HOSTNAME this INSTANCE will identify itself as! \033[0m"
+  usage
+  exit 5
+fi
+debug "the HOSTNAME is set to ,$HOSTNAME,"
+
+if [[ "$HOSTNAME" =~ "$DOMAIN" ]]
+then
+  debug "Hostname ,$HOSTNAME, has Domain ,$DOMAIN, already appended"
+else
+  debug "Hostname ,$HOSTNAME, does not have Domain ,$DOMAIN, appended, we need to append it."
+  HOSTNAME="${HOSTNAME}.${DOMAIN}"
+  debug "the HOSTNAME is now set to ,$HOSTNAME,"
+fi
+
+# EMAIL
+if [[ "$EMAIL" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE EMAIL of the POSTMASTER for this instance! \033[0m"
+  usage
+  exit 6
+fi
+debug "the EMAIL is set to ,$EMAIL,"
+
+if [[ "$EMAIL" =~ "$DOMAIN" ]]
+then
+  debug "EMAIL ,$EMAIL, has Domain ,$DOMAIN, already appended"
+else
+  debug "EMAIL ,$EMAIL, does not have Domain ,$DOMAIN, appended, we need to append it."
+  EMAIL="${EMAIL}@${DOMAIN}"
+  debug "the EMAIL is now set to ,$EMAIL,"
+fi
+
+# IP of mail instance
+if [[ "$IP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE mail IP this INSTANCE will use! \033[0m"
+  usage
+  exit 7
+fi
+debug "the mail IP is set to ,$IP,"
+
+# IP of web instance
+if [[ "$WIP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE web IP this INSTANCE will use! \033[0m"
+  usage
+  exit 8
+fi
+debug "the web IP is set to ,$WIP,"
+
+# prefix cannot be blank it is a required argument
+if [[ "$PRE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE PREFIX for each INSTANCE NAME! \033[0m"
+  usage
+  exit 9
+fi
+
+# Enforce the 13 character limit
+PRELENGTH=${#PRE}
+debug "prefix length is ,$PRELENGTH,"
+if [[ $PRELENGTH -gt $PRELIMIT ]]
+then
+  echo -e "\033[1;31m prefix length must not be longer than $PRELIMIT characters! \033[0m"
+  usage
+  exit 10
+fi
+debug "the prefix is set to ,$PRE,"
+
+if [[ "$DEBUG" == "TRUE" ]]; then
+ $BINDIR/mkmailserver -d -f $HOSTNAME -e $EMAIL -i $IP -p $PRE
+ $BINDIR/mkhttpd -d -n ${PRE}${HTTPDNAME}
+ $BINDIR/mkwebmail -d -i $IP -p ${PRE}${POSTNAME} -a ${PRE}${HTTPDNAME} -n ${PRE}webmail
+else
+ $BINDIR/mkmailserver -f $HOSTNAME -e $EMAIL -i $IP -p $PRE
+ $BINDIR/mkhttpd -n ${PRE}${HTTPDNAME}
+ $BINDIR/mkwebmail -i $IP -p ${PRE}${POSTNAME} -a ${PRE}${HTTPDNAME} -n ${PRE}webmail
+fi
+
+# echo out the apache configuration file
+echo "# VHOST for $DOMAIN" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "Listen $WIP:80" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "<VirtualHost $WIP:80>" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " ServerName $DOMAIN" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " ServerAlias www.$DOMAIN $WIP" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " ServerAdmin $EMAIL" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " # Prevent Cross-Site-Tracing" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " RewriteEngine On" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " RewriteCond %{REQUEST_METHOD} ^TRACE" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " RewriteRule .* - [F] " >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " CustomLog logs/$DOMAIN-80.log combined" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo " ErrorLog logs/$DOMAIN-80-error.log" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "</VirtualHost>" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+echo "" >> /etc/${PRE}${HTTPDNAME}/conf.d/$DOMAIN.conf
+
+echo -e "\033[1mMake sure that the configuration files are correct \033[1m)"
+echo -e "\033[1mYou should now have ${PRE}${POSTNAME} postfix instance, ${PRE}${DOVENAME} dovecot instance, ${PRE}${HTTPDNAME} instance, and a webmail (Squirrelmail) instance in the document root of the Apache instance. \033[1m)"
+echo -e "\033[0m"
+echo
+
+

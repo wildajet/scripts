@@ -1,0 +1,402 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create an apache httpd instance on a Redhat/CentOS server
+# 	it makes a copy of /etc/httpd and symlinks to the original binaries.
+# 	also echos out a new /etc/init.d start/stop script and adds it via chkconfig
+# 	it also echos out a new /etc/sysconfig file defaulting to the threaded Apache.
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+BINDIR=/usr/sbin
+APPLOG=/var/log
+APACHEBASE="httpd"
+OLDDOCROOT="/var/www/html"
+DOCROOT="/var/www"
+VARPROD=""
+VERSION=""
+ORIG_APACHE=""
+OLD_CONF=""
+BINNAME=""
+NEWBINNAME=""
+NEW_APACHE=""
+NAMELIMIT=30
+NEW_LOG=""
+NEW_CONF=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -n instance_name"
+ echo "         -n apache_instance_name        # only allowed $NAMELIMIT characters and the last 5 must be httpd"
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -n NAMEhttpd"
+ echo ""
+}
+
+# determine the name of the new apache instance
+if [[ $# < 1 ]]; then
+ usage
+ exit 1
+fi
+
+while getopts "n:v" options; do
+  case $options in
+    n ) NEW_APACHE=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 1;;
+    * ) usage
+          exit 1;;
+  esac
+done
+
+# name cannot be blank it is a required argument
+if [[ "$NEW_APACHE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE APACHE INSTANCE NAME! \033[0m"
+  usage
+  exit 1
+fi
+
+
+# enforce the name restrictions
+enforceNameLength $NEW_APACHE $APACHEBASE $NAMELIMIT
+RETVAL=$?
+if [[ $RETVAL > 0 ]]; then
+ usage
+ exit 1
+fi
+
+debug "Apache instance name is set to ,$NEW_APACHE,"
+
+# Check and make sure the name isn't already used
+cd $ETC
+USED=`ls -d *httpd*`
+debug "list of currently used Apache instance names ,$USED,"
+for NAME in $USED
+do
+ debug "NAME is ,$NAME, and NEW_APACHE is ,$NEW_APACHE,"
+ if [ "$NEW_APACHE" == "$NAME" ]
+ then
+  echo -e "\033[1;31mPICK A NEW NAME that name ($NEW_APACHE) is already used!\033[0m"
+  echo "exiting"
+  exit 1
+ fi
+done
+
+# Setup the ORIG_APACHE and BINNAME to be what we need
+ORIG_APACHE="${APACHEBASE}"
+BINNAME="${APACHEBASE}"
+NEWBINNAME="${NEW_APACHE}"
+
+debug "ORIG_APACHE is set to $ORIG_APACHE"
+debug "BINNAME is set to $BINNAME"
+debug "NEWBINNAME is set to $NEWBINNAME"
+
+debug "checking for template directory and binaries for the version you want to build"
+# Make sure the template directory and binaries for the version they want to make an instance of are setup on this box
+if [[ ! -d "${ETC}/${ORIG_APACHE}" && ! -e "${BINDIR}/${BINNAME}" ]]
+then
+  echo -e "\033[1;31m THIS MACHINE IS NOT SETUP TO RUN APACHE \033[0m"
+  echo -e "\033[1;31m \t${ETC}/${ORIG_APACHE} and/or ${BINDIR}/${BINNAME} do not exist! \033[0m"
+  exit 1
+fi
+
+OLD_CONF=$ETC/$ORIG_APACHE
+NEW_LOG=$APPLOG/$APACHEBASE
+NEW_CONF=$ETC/$NEW_APACHE
+NEW_DOCROOT=$DOCROOT/$NEW_APACHE
+VAR=/var
+
+# create the new directory for the configuration files
+mkdir $ETC/$NEW_APACHE
+
+# Create the document root directory
+mkdir $NEW_DOCROOT
+chown -R root:apache $NEW_DOCROOT
+chmod 775 $NEW_DOCROOT
+chmod g+s $NEW_DOCROOT
+
+# OK, now build out the configuration directory
+cd $ETC/$NEW_APACHE
+ln -s ../../var/log/httpd logs
+ln -s ../../usr/lib/httpd/modules modules
+ln -s ../../var/run run
+
+# link in a new executable
+ln -s $BINDIR/$BINNAME $BINDIR/$NEWBINNAME
+ln -s $BINDIR/${BINNAME}.worker $BINDIR/${NEWBINNAME}.worker
+
+# copy in the configuration files
+mkdir $NEW_CONF/conf
+cp -Rp $OLD_CONF/conf/* $NEW_CONF/conf/
+rm -f $NEW_CONF/conf/README
+
+# make modifications to the configuration files
+sed -e "s/$ORIG_APACHE\.pid/$NEW_APACHE\.pid/g" \
+    -e "s,/etc/$ORIG_APACHE,/etc/$NEW_APACHE,g" --in-place $NEW_CONF/conf/httpd.conf
+
+sed -e "s,$OLDDOCROOT,$NEW_DOCROOT,g" --in-place $NEW_CONF/conf/httpd.conf
+
+# copy in the subordinate configuration files
+mkdir $NEW_CONF/conf.d
+cp -Rp $OLD_CONF/conf.d/* $NEW_CONF/conf.d/
+rm -f $NEW_CONF/conf.d/README
+
+# we are going to echo out the init.d start/stop script because we need to override the killproc script
+
+echo "#!/bin/bash" >> $ETC/init.d/$NEW_APACHE
+echo "#" >> $ETC/init.d/$NEW_APACHE
+echo "# $NEW_APACE Startup script for an Apache Web Server instance" >> $ETC/init.d/$NEW_APACHE
+echo "#" >> $ETC/init.d/$NEW_APACHE
+echo "# chkconfig: - 85 15" >> $ETC/init.d/$NEW_APACHE
+echo "# description: Apache is a World Wide Web server.  It is used to serve \ " >> $ETC/init.d/$NEW_APACHE
+echo "#              HTML files and CGI." >> $ETC/init.d/$NEW_APACHE
+echo "# processname: $NEW_APACHE" >> $ETC/init.d/$NEW_APACHE
+echo "# config: /etc/$NEW_APACHE/conf/$NEW_APACHE.conf" >> $ETC/init.d/$NEW_APACHE
+echo "# config: /etc/sysconfig/$NEW_APACHE" >> $ETC/init.d/$NEW_APACHE
+echo "# pidfile: /var/run/$NEW_APACHE.pid" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "pidfile=\${PIDFILE-/var/run/$NEW_APACHE.pid}" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# Source function library." >> $ETC/init.d/$NEW_APACHE
+echo ". /etc/rc.d/init.d/functions" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# Over ride the function to stop a program." >> $ETC/init.d/$NEW_APACHE
+echo "killproc() {" >> $ETC/init.d/$NEW_APACHE
+echo "        RC=0; delay=3" >> $ETC/init.d/$NEW_APACHE
+echo "        # Test syntax." >> $ETC/init.d/$NEW_APACHE
+echo "        if [ \"\$#\" -eq 0 ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "                echo \$\"Usage: killproc [-d delay] {program} [signal]\"" >> $ETC/init.d/$NEW_APACHE
+echo "                return 1" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "        if [ \"\$1\" = \"-d\" ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "                delay=\$2" >> $ETC/init.d/$NEW_APACHE
+echo "                shift 2" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "        notset=0" >> $ETC/init.d/$NEW_APACHE
+echo "        # check for second arg to be kill level" >> $ETC/init.d/$NEW_APACHE
+echo "        if [ -n \"\$2\" ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "                killlevel=\$2" >> $ETC/init.d/$NEW_APACHE
+echo "        else" >> $ETC/init.d/$NEW_APACHE
+echo "                notset=1" >> $ETC/init.d/$NEW_APACHE
+echo "                killlevel=\"-9\"" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "        # Save basename." >> $ETC/init.d/$NEW_APACHE
+echo "        base=\${1##*/}" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "        # Find pid." >> $ETC/init.d/$NEW_APACHE
+echo "        pid=" >> $ETC/init.d/$NEW_APACHE
+echo "        if [ -f \$pidfile ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "                local line p" >> $ETC/init.d/$NEW_APACHE
+echo "                read line < \$pidfile" >> $ETC/init.d/$NEW_APACHE
+echo "                for p in \$line ; do" >> $ETC/init.d/$NEW_APACHE
+echo "                        [ -z \"\${p//[0-9]/}\" -a -d \"/proc/\$p\" ] && pid=\"\$pid \$p\"" >> $ETC/init.d/$NEW_APACHE
+echo "                done" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "        # Kill it." >> $ETC/init.d/$NEW_APACHE
+echo "        if [ -n \"\${pid:-}\" ] ; then" >> $ETC/init.d/$NEW_APACHE
+echo "                [ \"\$BOOTUP\" = \"verbose\" -a -z \"\$LSB\" ] && echo -n \"\$base \"" >> $ETC/init.d/$NEW_APACHE
+echo "                if [ \"\$notset\" -eq \"1\" ] ; then" >> $ETC/init.d/$NEW_APACHE
+echo "                       if checkpid \$pid 2>&1; then" >> $ETC/init.d/$NEW_APACHE
+echo "                           # TERM first, then KILL if not dead" >> $ETC/init.d/$NEW_APACHE
+echo "                           kill -TERM \$pid >/dev/null 2>&1" >> $ETC/init.d/$NEW_APACHE
+echo "                           usleep 100000" >> $ETC/init.d/$NEW_APACHE
+echo "                           if checkpid \$pid && sleep 1 &&" >> $ETC/init.d/$NEW_APACHE
+echo "                              checkpid \$pid && sleep \$delay &&" >> $ETC/init.d/$NEW_APACHE
+echo "                              checkpid \$pid ; then" >> $ETC/init.d/$NEW_APACHE
+echo "                                kill -KILL \$pid >/dev/null 2>&1" >> $ETC/init.d/$NEW_APACHE
+echo "                                usleep 100000" >> $ETC/init.d/$NEW_APACHE
+echo "                           fi" >> $ETC/init.d/$NEW_APACHE
+echo "                        fi" >> $ETC/init.d/$NEW_APACHE
+echo "                        checkpid \$pid" >> $ETC/init.d/$NEW_APACHE
+echo "                        RC=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "                        NUM=\`ps -ef | grep \$EDIR/\$prog | grep -v \"grep\" | grep -v \"service\" | grep -v \"init.d\" | wc -l\`" >> $ETC/init.d/$NEW_APACHE
+echo "                        if [ \$NUM -gt 0 ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "                                failure \$\"$base shutdown\"" >> $ETC/init.d/$NEW_APACHE
+echo "                                echo" >> $ETC/init.d/$NEW_APACHE
+echo "                                ps -ef | grep \$EDIR/\$prog | grep -v \"grep\" | grep -v \"service\" | grep -v \"init.d\"" >> $ETC/init.d/$NEW_APACHE
+echo "                                echo" >> $ETC/init.d/$NEW_APACHE
+echo "                        else" >> $ETC/init.d/$NEW_APACHE
+echo "                                [ \"\$RC\" -eq 0 ] && failure \$\"\$base shutdown\" || success \$\"\$base shutdown\"" >> $ETC/init.d/$NEW_APACHE
+echo "                        fi" >> $ETC/init.d/$NEW_APACHE
+echo "                        [ \"\$RC\" -eq 0 ] && failure \$\"\$base shutdown\" || success \$\"\$base shutdown\"" >> $ETC/init.d/$NEW_APACHE
+echo "                        RC=\$((! \$RC))" >> $ETC/init.d/$NEW_APACHE
+echo "                # use specified level only" >> $ETC/init.d/$NEW_APACHE
+echo "                else" >> $ETC/init.d/$NEW_APACHE
+echo "                        if checkpid \$pid; then" >> $ETC/init.d/$NEW_APACHE
+echo "                                kill \$killlevel \$pid >/dev/null 2>&1" >> $ETC/init.d/$NEW_APACHE
+echo "                                RC=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "                                [ \"\$RC\" -eq 0 ] && success \$\"\$base \$killlevel\" || failure \$\"\$base \$killlevel\"" >> $ETC/init.d/$NEW_APACHE
+echo "                        fi" >> $ETC/init.d/$NEW_APACHE
+echo "                fi" >> $ETC/init.d/$NEW_APACHE
+echo "        else" >> $ETC/init.d/$NEW_APACHE
+echo "            failure \$\"\$base shutdown\"" >> $ETC/init.d/$NEW_APACHE
+echo "            RC=1" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "        # Remove pid file if any." >> $ETC/init.d/$NEW_APACHE
+echo "        if [ \"\$notset\" = \"1\" ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "            rm -f \$pidfile" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "        return \$RC" >> $ETC/init.d/$NEW_APACHE
+echo "}" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "if [ -f /etc/sysconfig/$NEW_APACHE ]; then" >> $ETC/init.d/$NEW_APACHE
+echo "        . /etc/sysconfig/$NEW_APACHE" >> $ETC/init.d/$NEW_APACHE
+echo "fi" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# Start httpd in the C locale by default." >> $ETC/init.d/$NEW_APACHE
+echo "HTTPD_LANG=\${HTTPD_LANG-\"C\"}" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# This will prevent initlog from swallowing up a pass-phrase prompt if" >> $ETC/init.d/$NEW_APACHE
+echo "# mod_ssl needs a pass-phrase from the user." >> $ETC/init.d/$NEW_APACHE
+echo "INITLOG_ARGS=\"\"" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# Set HTTPD=/usr/sbin/$NEW_APACHE.worker in /etc/sysconfig/$NEW_APACHE to use a server" >> $ETC/init.d/$NEW_APACHE
+echo "# with the thread-based \"worker\" MPM; BE WARNED that some modules may not" >> $ETC/init.d/$NEW_APACHE
+echo "# work correctly with a thread-based MPM; notably PHP will refuse to start." >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# Path to the apachectl script, server binary, and short-form for messages." >> $ETC/init.d/$NEW_APACHE
+echo "apachectl=/usr/sbin/apachectl" >> $ETC/init.d/$NEW_APACHE
+echo "httpd=\${HTTPD-/usr/sbin/$NEW_APACHE}" >> $ETC/init.d/$NEW_APACHE
+echo "EDIR=/usr/sbin" >> $ETC/init.d/$NEW_APACHE
+echo "prog=$NEW_APACHE" >> $ETC/init.d/$NEW_APACHE
+echo "lockfile=\${LOCKFILE-/var/lock/subsys/$NEW_APACHE}" >> $ETC/init.d/$NEW_APACHE
+echo "RETVAL=0" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# The semantics of these two functions differ from the way apachectl does" >> $ETC/init.d/$NEW_APACHE
+echo "# things -- attempting to start while running is a failure, and shutdown" >> $ETC/init.d/$NEW_APACHE
+echo "# when not running is also a failure.  So we just do it the way init scripts" >> $ETC/init.d/$NEW_APACHE
+echo "# are expected to behave here." >> $ETC/init.d/$NEW_APACHE
+echo "start() {" >> $ETC/init.d/$NEW_APACHE
+echo "        echo -n \$\"Starting \$prog: \"" >> $ETC/init.d/$NEW_APACHE
+echo "        LANG=\$HTTPD_LANG daemon \$httpd \$OPTIONS" >> $ETC/init.d/$NEW_APACHE
+echo "        RETVAL=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "        echo" >> $ETC/init.d/$NEW_APACHE
+echo "        [ \$RETVAL = 0 ] && touch \${lockfile}" >> $ETC/init.d/$NEW_APACHE
+echo "        return \$RETVAL" >> $ETC/init.d/$NEW_APACHE
+echo "}" >> $ETC/init.d/$NEW_APACHE
+echo "# When stopping httpd a delay of >10 second is required before SIGKILLing the" >> $ETC/init.d/$NEW_APACHE
+echo "# httpd parent; this gives enough time for the httpd parent to SIGKILL any" >> $ETC/init.d/$NEW_APACHE
+echo "# errant children." >> $ETC/init.d/$NEW_APACHE
+echo "stop() {" >> $ETC/init.d/$NEW_APACHE
+echo "        if [ -f \$pidfile ] ; then" >> $ETC/init.d/$NEW_APACHE
+echo "                echo -n \$\"Stopping \$prog: \"" >> $ETC/init.d/$NEW_APACHE
+echo "                killproc -d 10 \$httpd" >> $ETC/init.d/$NEW_APACHE
+echo "                RETVAL=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "                echo" >> $ETC/init.d/$NEW_APACHE
+echo "                [ \$RETVAL = 0 ] && rm -f \${lockfile} \${pidfile}" >> $ETC/init.d/$NEW_APACHE
+echo "        else" >> $ETC/init.d/$NEW_APACHE
+echo "                echo \"$NEW_APACHE is already stopped!\"" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "}" >> $ETC/init.d/$NEW_APACHE
+echo "reload() {" >> $ETC/init.d/$NEW_APACHE
+echo "        echo -n \$\"Reloading \$prog: \"" >> $ETC/init.d/$NEW_APACHE
+echo "        if ! LANG=\$HTTPD_LANG \$httpd \$OPTIONS -t >&/dev/null; then" >> $ETC/init.d/$NEW_APACHE
+echo "                RETVAL=\$?"  >> $ETC/init.d/$NEW_APACHE
+echo "                echo \$\"not reloading due to configuration syntax error\"">> $ETC/init.d/$NEW_APACHE
+echo "                failure \$\"not reloading \$httpd due to configuration syntax error\"">> $ETC/init.d/$NEW_APACHE
+echo "        else" >> $ETC/init.d/$NEW_APACHE
+echo "                killproc \$httpd -HUP" >> $ETC/init.d/$NEW_APACHE
+echo "                RETVAL=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "        echo" >> $ETC/init.d/$NEW_APACHE
+echo "}" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "# See how we were called." >> $ETC/init.d/$NEW_APACHE
+echo "case \"\$1\" in" >> $ETC/init.d/$NEW_APACHE
+echo "  start)" >> $ETC/init.d/$NEW_APACHE
+echo "        start" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  stop)" >> $ETC/init.d/$NEW_APACHE
+echo "        stop" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  status)" >> $ETC/init.d/$NEW_APACHE
+echo "        status \$httpd" >> $ETC/init.d/$NEW_APACHE
+echo "        RETVAL=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  restart)" >> $ETC/init.d/$NEW_APACHE
+echo "        stop" >> $ETC/init.d/$NEW_APACHE
+echo "        start" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  condrestart)" >> $ETC/init.d/$NEW_APACHE
+echo "        if [ -f \${pidfile} ] ; then" >> $ETC/init.d/$NEW_APACHE
+echo "                stop" >> $ETC/init.d/$NEW_APACHE
+echo "                start" >> $ETC/init.d/$NEW_APACHE
+echo "        fi" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  reload)" >> $ETC/init.d/$NEW_APACHE
+echo "        reload" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  graceful|help|configtest|fullstatus)" >> $ETC/init.d/$NEW_APACHE
+echo "        \$apachectl \$@" >> $ETC/init.d/$NEW_APACHE
+echo "        RETVAL=\$?" >> $ETC/init.d/$NEW_APACHE
+echo "        ;;" >> $ETC/init.d/$NEW_APACHE
+echo "  *)" >> $ETC/init.d/$NEW_APACHE
+echo "        echo \$\"Usage: \$prog {start|stop|restart|condrestart|reload|status|fullstatus|graceful|help|configtest}\"" >> $ETC/init.d/$NEW_APACHE
+echo "        exit 1" >> $ETC/init.d/$NEW_APACHE
+echo "esac" >> $ETC/init.d/$NEW_APACHE
+echo "" >> $ETC/init.d/$NEW_APACHE
+echo "exit \$RETVAL" >> $ETC/init.d/$NEW_APACHE
+
+# set the permissions for the new init.d start/stop script
+chmod 755 $ETC/init.d/$NEW_APACHE
+
+# create the  /etc/sysconfig/$NEW_APACHE configuration file
+echo "# Configuration file for the httpd service." >> $ETC/sysconfig/$NEW_APACHE
+echo "#" >> $ETC/sysconfig/$NEW_APACHE
+echo "# The default processing model (MPM) is the process-based" >> $ETC/sysconfig/$NEW_APACHE
+echo "# 'prefork' model.  A thread-based model, 'worker', is also" >> $ETC/sysconfig/$NEW_APACHE
+echo "# available, but does not work with some modules (such as PHP)." >> $ETC/sysconfig/$NEW_APACHE
+echo "# The service must be stopped before changing this variable." >> $ETC/sysconfig/$NEW_APACHE
+echo "#" >> $ETC/sysconfig/$NEW_APACHE
+echo "HTTPD=/usr/sbin/${NEWBINNAME}.worker" >> $ETC/sysconfig/$NEW_APACHE
+echo "" >> $ETC/sysconfig/$NEW_APACHE
+echo "#" >> $ETC/sysconfig/$NEW_APACHE
+echo "# To pass additional options (for instance, -D definitions) to the" >> $ETC/sysconfig/$NEW_APACHE
+echo "# httpd binary at startup, set OPTIONS here." >> $ETC/sysconfig/$NEW_APACHE
+echo "#" >> $ETC/sysconfig/$NEW_APACHE
+echo "#OPTIONS=" >> $ETC/sysconfig/$NEW_APACHE
+echo "OPTIONS=\"-d $ETC/$NEW_APACHE\"" >> $ETC/sysconfig/$NEW_APACHE
+echo "" >> $ETC/sysconfig/$NEW_APACHE
+echo "#" >> $ETC/sysconfig/$NEW_APACHE
+echo "# By default, the httpd process is started in the C locale; to" >> $ETC/sysconfig/$NEW_APACHE
+echo "# change the locale in which the server runs, the HTTPD_LANG" >> $ETC/sysconfig/$NEW_APACHE
+echo "# variable can be set." >> $ETC/sysconfig/$NEW_APACHE
+echo "#" >> $ETC/sysconfig/$NEW_APACHE
+echo "#HTTPD_LANG=C" >> $ETC/sysconfig/$NEW_APACHE
+
+#Add the the automatic startup scripts and set to start on boot
+chkconfig --add $NEW_APACHE
+chkconfig $NEW_APACHE on
+
+echo ""
+echo -e "\033[1mApache httpd instance $NEW_APACHE has been created in \033[0m\033[1;31m/etc/$NEW_APACHE\033[0m\033[1m"
+echo -e "It has also been set to automatically start on boot (\033[0m\033[1;31m/etc/init.d/$NEW_APACHE\033[0m\033[1m)"
+echo
+echo -e "\033[1mYou will need to edit the configuration files (\033[0m\033[1;31m/etc/$NEW_APACHE/conf/httpd.conf\033[0m\033[1m and/or \033[0m\033[1;31m/etc/$NEW_APACHE/conf.d/ssl.conf\033[0m\033[1m)"
+echo -e "to set the IP and PORTS that you want it to listen on \033[0m"
+echo
+

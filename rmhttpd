@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to remove an apache httpd instance on a Redhat/CentOS server
+#  	this script basicaly undoes what mkhttpd does. 
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+BINDIR=/usr/sbin
+APPLOG=/var/log
+APACHEBASE="httpd"
+DOCROOT="/var/www"
+ORIG_APACHE=""
+NEW_APACHE=""
+NEW_LOG=""
+NEW_CONF=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# make sure they are root otherwise exit
+if [ `id -u` != "0" ]; then
+        echo -e "\033[1;31mSorry, you must be root to run this script! \033[0m"
+        exit 1
+fi
+
+# if -d verbosity will cause the debug statements to print.
+debug () {
+ # function to echo out messages
+ if [[ "$DEBUG" == "TRUE" ]]; then
+  echo -e "$1"
+ fi
+}
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -n instance_name"
+ echo "         -n apache_instance_name"
+ echo "         -v verbose                     # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -n NAMEhttpd"
+ echo ""
+}
+
+# determine the name of the new apache instance
+if [[ $# < 1 ]]; then
+ usage
+ exit 1
+fi
+
+while getopts ":n:v" options; do
+  case $options in
+    n ) NEW_APACHE=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 1;;
+    * ) usage
+          exit 1;;
+  esac
+done
+
+debug "Apache instance to remove is set to ,$NEW_APACHE,"
+
+if [[ "$NEW_APACHE" == "" ]]
+then
+  echo "\033[1;31mApache instance name isn't set ,$NEW_APACHE,\033[0m"
+  usage
+  exit 1
+fi
+
+NEW_DOCROOT=$DOCROOT/$NEW_APACHE
+
+# Check and make sure the binary and the server root directory exist
+if [[ ! -d "${ETC}/${NEW_APACHE}" ]]
+then
+  echo -e "\033[1;31m THIS MACHINE DOES NOT HAVE $NEW_APACHE APACHE INSTANCE ON IT! \033[0m"
+  echo -e "\033[1;31m \t${ETC}/${NEW_APACHE} does not exist! \033[0m"
+  exit 1
+fi
+
+# Check and make sure the binary and the server root directory exist
+if [[ ! -f "${BINDIR}/${NEW_APACHE}" ]]
+then
+  echo -e "\033[1;31m THIS MACHINE DOES NOT HAVE $NEW_APACHE APACHE INSTANCE ON IT! \033[0m"
+  echo -e "\033[1;31m \t${BINDIR}/${NEW_APACHE} does not exist! \033[0m"
+  exit 1
+fi
+
+#remove the start on boot settings
+chkconfig --del $NEW_APACHE
+debug "removed startup from chkconfig"
+
+# remove the logging directory
+if [[ -d "$APPLOG/$NEW_APACHE" ]]
+then
+ rm -Rf $APPLOG/$NEW_APACHE
+ debug "removed $APPLOG/$NEW_APACHE "
+fi
+
+# remove the script in /etc/init.d
+if [[ -f "/etc/init.d/$NEW_APACHE" ]]
+then
+ rm -f /etc/init.d/$NEW_APACHE
+ debug "removed /etc/init.d/$NEW_APACHE start script"
+fi
+
+# remove the options our of /etc/sysconfig/
+if [[ -f "/etc/sysconfig/$NEW_APACHE" ]]
+then
+ rm -f /etc/sysconfig/$NEW_APACHE
+ debug "removed options file /etc/sysconfig/$NEW_APACHE "
+fi
+
+# remove links for new exectables
+if [[ -f "$BINDIR/$NEW_APACHE" ]]
+then
+ rm -f $BINDIR/$NEW_APACHE
+ debug "removed binary $BINDIR/$NEW_APACHE"
+fi
+
+if [[ -f "$BINDIR/${NEW_APACHE}.worker" ]]
+then
+ rm -f $BINDIR/${NEW_APACHE}.worker
+ debug "removed binary $BINDIR/${NEW_APACHE}.worker"
+fi
+
+# remove the server root directory
+if [[ -d "$ETC/$NEW_APACHE" ]]
+then
+ rm -Rf $ETC/$NEW_APACHE
+ debug "removed server root directory $ETC/$NEW_APACHE"
+fi
+
+if [[ -d "$NEW_DOCROOT" ]]
+then
+ rm -Rf $NEW_DOCROOT
+ debug "removed document root directory $NEW_DOCROOT"
+fi
+
+echo -e "\033[1mApache instance $NEW_APACHE has been removed (\033[0m\033[1;31m/etc/$NEW_APACHE\033[0m\033[1m)"
+echo -e "The start script has been removed (\033[0m\033[1;31m/etc/init.d/$NEW_APACHE\033[0m\033[1m)"
+echo -e "The options file has been removed (\033[0m\033[1;31m/etc/sysconfig/$NEW_APACHE\033[0m\033[1m)"
+echo -e "The executable have been removed "
+echo
+echo -e "bye ;-)\033[0m"
+

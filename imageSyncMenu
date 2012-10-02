@@ -1,0 +1,478 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+#	Script to present a menu of what a user can do when they SSH into a box
+#       In this case it is a menu to sync directories with other servers
+#       In their .bash_profile it kicks off this script
+#                    
+# You probably have to modify this this a lot to meet your needs
+#
+#########
+# Setup Variables
+#########
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+ECHO=/bin/echo
+USER=""
+GROUPLIST=""
+HOMEDIR=""
+DEVHOME="/home/DEVUPLOADS"
+QAHOME="/home/QAUPLOADS"
+PRODSUPHOME="/home/PRODSUPUPLOADS"
+LOCALDIR=""
+APACHE="httpd"
+EXE=/usr/local/bin/imagesync
+PROMOTEEXE=/usr/local/bin/imagespromote
+EXITOPTION="Exit"
+DEVPUSHOPTIONS="Push_Local_2_DEV"
+DEVPULLOPTIONS="Pull_DEV_2_Local"
+DEV2QAPROMOTEOPTIONS="Promote_DEV_2_QA" 
+QAPUSHOPTIONS="Push_Local_2_QA"
+QAPULLOPTIONS="Pull_QA_2_Local"
+QA2STAGEPROMOTEOPTIONS="Promote_QA_2_STAGE"
+STAGEPUSHOPTIONS="Push_Local_2_STAGE"
+STAGEPULLOPTIONS="Pull_STAGE_2_Local"
+STAGE2PRODPROMOTEOPTIONS="Promote_STAGE_2_PROD"
+PRODPUSHOPTIONS="Push_Local_2_PROD"
+PRODPULLOPTIONS="Pull_PROD_2_Local"
+ALLPUSHOPTIONS="$DEVPUSHOPTIONS $QAPUSHOPTIONS $STAGEPUSHOPTIONS $PRODPUSHOPTIONS Push_Local_2_ALL"
+ALLPULLOPTIONS="$DEVPULLOPTIONS $QAPULLOPTIONS $STAGEPULLOPTIONS $PRODPULLOPTIONS"
+ALLPROMOTEOPTIONS="$DEV2QAPROMOTEOPTIONS $QA2STAGEPROMOTEOPTIONS $STAGE2PRODPROMOTEOPTIONS"
+ALLOPTIONS="$ALLPUSHOPTIONS $ALLPULLOPTIONS $ALLPROMOTEOPTIONS"
+PRODOPTIONS="$PRODPUSHOPTIONS $ALLPULLOPTIONS"
+STAGEOPTIONS="$STAGEPUSHOPTIONS $ALLPULLOPTIONS"
+PRODSUPOPTIONS="Push_Images"
+QALEADOPTIONS="$QAPUSHOPTIONS $DEV2QAPROMOTEOPTIONS $ALLPULLOPTIONS"
+QAOPTIONS="$QAPUSHOPTIONS $ALLPULLOPTIONS"
+DEVOPTIONS="$DEVPUSHOPTIONS $ALLPULLOPTIONS"
+DEVLEADOPTIONS="$DEVPUSHOPTIONS $ALLPULLOPTIONS"
+LISTOPTIONS=""
+ADMINGROUPS="ADMINGROUP"
+PRODGROUPS="PRODGROUP"
+STAGEGROUPS=""
+PRODSUPGROUPS="PRODSUPGROUP"
+QALEADGROUPS="QALEADGROUP"
+QAGROUPS="QAGROUP"
+DEVLEADGROUPS="DEVLEADGROUP"
+DEVGROUPS="DEVGROUP"
+WHAT="UNSET"
+RESPONSE=""
+ANSWER="y"
+
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+if [[ -e /usr/local/bin/functions ]]
+then
+ . /usr/local/bin/functions
+fi
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ $ECHO ""
+ $ECHO "Usage: $SCRIPT [options]"
+ $ECHO "         -u USERNAME                    # USERNAME of the person that we are to run this script for" 
+ $ECHO "                                        #  Normally this is automatically passed in from their .bash_profile"
+ $ECHO "         -v verbose (debug)             # default is off"
+ $ECHO "         -h display this help message"
+ $ECHO ""
+ $ECHO " i.e. $SCRIPT"
+ $ECHO ""
+}
+
+# determine the number of arguments passed in
+#if [[ $# < 2 ]]; then
+# $ECHO -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+# $ECHO "Number of arguments passed in is ,$#,"
+# usage
+# exit 2
+#fi
+
+sub_control_c ()
+{
+  if [[ "$WHAT" != "ADMIN" ]]
+  then
+    $ECHO -e "\n\033[1;31m SHELL ACCESS IS NOT ALLOWED! \033[0m\n"
+  else
+    exit
+  fi
+}
+
+sub_control_z ()
+{
+  $ECHO -e "\n\033[1;31m SHELL ACCESS IS NOT ALLOWED! \033[0m\n"
+}
+
+sub_localdir_get ()
+{
+ if [[ "$WHAT" == "QA" || "$WHAT" == "QALEAD" ]]; then
+  find $HOMEDIR -name $APACHE | cut -d"/" -f1,2,3,4
+ elif [[ "$WHAT" == "ADMIN" ]]; then
+  # print out a helpful list of possible directories
+  find $DEVHOME -name $APACHE | cut -d"/" -f1,2,3
+  find $QAHOME -name $APACHE | cut -d"/" -f1,2,3,4
+  find $PRODSUPHOME -name $APACHE | cut -d"/" -f1,2,3
+ fi
+
+ $ECHO -ne "\033[1mWhat is the local directory that has the\033[1;31m $APACHE \033[0m\033[1mdirectory in it\033[1;31m [$HOMEDIR]\033[0m\033[1m: \033[0m"
+ read RESPONSE
+ $ECHO
+
+ if [[ "$RESPONSE" == "" ]]; then
+  LOCALDIR=$HOMEDIR
+ else
+  LOCALDIR=$RESPONSE
+ fi
+
+ $ECHO -ne "\033[1mIs[ \033[1;31m $LOCALDIR \033[0m\033[1m ] the correct parent directory where we will find $APACHE (y|n|q)[\33[0my\33[0m\033[1m]: \033[0m"
+ read ANSWER
+ $ECHO
+ if [[ "$ANSWER" == "" ]]; then
+  ANSWER="y"
+ fi
+
+ if [[ "$ANSWER" == "N" ]]; then
+  ANSWER="n"
+ fi
+
+ if [[ "$ANSWER" == "Q" || "$ANSWER" == "q" ]]; then
+  LOCALDIR="NONE"
+  return
+ fi
+
+ if [[ "$ANSWER" == "Y" || "$ANSWER" == "y" ]]; then
+  if [[ ! -d "$LOCALDIR/$APACHE" ]]; then
+   $ECHO -e "\033[1;31m DIRECTORY $LOCALDIR/$APACHE DOES NOT EXIST.  PLEASE ENTER THE PARENT DIRECTORY THAT CONTAINS $APACHE IN IT. \033[0m\033[1m \033[0m"
+   ANSWER="n"
+   $ECHO
+  fi
+ fi
+
+ while [ "$ANSWER" = "n" ]
+ do
+  if [[ "$WHAT" == "QA" || "$WHAT" == "QALEAD" ]]; then
+   find $HOMEDIR -name $APACHE | cut -d"/" -f1,2,3,4
+  elif [[ "$WHAT" == "ADMIN" ]]; then
+   find $DEVHOME -name $APACHE | cut -d"/" -f1,2,3
+   find $QAHOME -name $APACHE | cut -d"/" -f1,2,3,4
+   find $PRODSUPHOME -name $APACHE | cut -d"/" -f1,2,3
+  fi
+
+  $ECHO -ne "\033[1mWhat is the local directory that has the\033[1;31m $APACHE \033[0m\033[1mdirectory in it\033[1;31m [$HOMEDIR]\033[0m\033[1m: \033[0m"
+  read RESPONSE
+  $ECHO
+
+  if [[ "$RESPONSE" == "" ]]; then
+   LOCALDIR=$HOMEDIR
+  else
+   LOCALDIR=$RESPONSE
+  fi
+
+  $ECHO -ne "\033[1mIs[ \033[1;31m $LOCALDIR \033[0m\033[1m ] the correct parent directory where we will find $APACHE (y|n|q)[\33[0my\33[0m\033[1m]: \033[0m"
+  read ANSWER
+  $ECHO
+
+  if [[ "$ANSWER" == "" ]]; then
+   ANSWER="y"
+  fi
+
+  if [[ "$ANSWER" == "N" ]]; then
+   ANSWER="n"
+  fi
+
+  if [[ "$ANSWER" == "Q" || "$ANSWER" == "q" ]]; then
+   LOCALDIR="NONE"
+   return
+  fi
+
+
+  if [[ "$ANSWER" == "Y" || "$ANSWER" == "y" ]]; then
+   if [[ ! -d "$LOCALDIR/$APACHE" ]]; then
+    $ECHO -e "\033[1;31m DIRECTORY $LOCALDIR/$APACHE DOES NOT EXIST.  PLEASE ENTER THE PARENT DIRECTORY THAT CONTAINS $APACHE IN IT. \033[0m\033[1m \033[0m"
+    ANSWER="n"
+   fi
+  fi
+ done
+}
+
+sub_push ()
+{
+ ENV=$1
+ if [[ "$HOMEDIR" == "$DEVHOME" || "$HOMEDIR" == "$PRODSUPHOME" ]]
+ then
+  LOCALDIR="$HOMEDIR"
+ else
+  sub_localdir_get
+ fi
+
+ if [[ "$LOCALDIR" == "NONE" ]]; then
+   return
+ fi
+
+ $ECHO -e "\nBegining to PUSH $APACHE to the $ENV image web server. This may take awhile be patient.\n" 
+ $EXE -e $ENV -p PUSH -l $LOCALDIR 
+ $ECHO -e "\nPUSH to the $ENV $APACHE image web server completed.\n"
+}
+
+sub_pull ()
+{
+ ENV=$1
+ if [[ "$HOMEDIR" == "$DEVHOME" || "$HOMEDIR" == "$PRODSUPHOME" ]]
+ then
+  LOCALDIR="$HOMEDIR"
+ else
+  sub_localdir_get
+ fi
+
+ if [[ "$LOCALDIR" == "NONE" ]]; then
+   return
+ fi
+
+ $ECHO -e "\nBegining to PULL $APACHE from the $ENV web server.  This may take awhile be patient.\n" 
+ $EXE -e $ENV -p PULL -l $LOCALDIR 
+ $ECHO -e "\nPULL from the $ENV $APACHE web server completed.\n"
+}
+
+sub_printmenu()
+{
+  clear
+  $ECHO "------------------------------------------------"
+  $ECHO " Image Server Syncronization Management Console "
+  $ECHO "------------------------------------------------"
+  PS3="Select a number from the menu -> "
+
+  # generate the menu from the options printing PS3 on the line to get there choice
+  select i in $LISTOPTIONS ;
+  do
+    case $i in
+      Push_Local_2_DEV)
+        sub_push DEV
+      ;;
+      Pull_DEV_2_Local)
+        sub_pull DEV
+      ;;
+      Push_Local_2_QA)
+        sub_push QA
+      ;;
+      Pull_QA_2_Local)
+        sub_pull QA
+      ;;
+      Push_Local_2_STAGE)
+        sub_push STAGE
+      ;;
+      Pull_STAGE_2_Local)
+        sub_pull STAGE
+      ;;
+      Push_Local_2_PROD)
+        sub_push PROD
+      ;;
+      Pull_PROD_2_Local)
+        sub_pull PROD
+      ;;
+      Push_Local_2_ALL)
+        sub_push ALL
+      ;;
+      Promote_DEV_2_QA)
+        $ECHO -e "\nBegining to promote DEV to QA.  This may take awhile be patient.\n"
+        $PROMOTEEXE -f DEV -t QA
+        $ECHO -e "\nPromoting DEV to QA completed.\n"
+      ;;
+      Promote_QA_2_STAGE)
+        $ECHO -e "\nBegining to promote QA to STAGE.  This may take awhile be patient.\n"
+        $PROMOTEEXE -f QA -t STAGE
+        $ECHO -e "\nPromoting QA to STAGE completed.\n"
+      ;;
+      Promote_STAGE_2_PROD)
+        $ECHO -e "\nBegining to promote STAGE to PROD.  This may take awhile be patient.\n"
+        $PROMOTEEXE -f STAGE -t PROD
+        $ECHO -e "\nPromoting STAGE to PROD completed.\n"
+      ;;
+      Push_Images)
+        sub_push ALL 
+      ;;
+      Exit)
+        $ECHO -e "\nGoodbye\n"
+        exit
+    esac
+  done
+}
+
+# trap keyboard interrupt (control-c)
+trap sub_control_c SIGINT
+# trap the keyboard interrup (control-z)
+trap sub_control_z SIGTSTP
+
+while getopts ":u:vh" options; do
+  case $options in
+    u ) USER=$OPTARG;;
+    v ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 2;;
+    * ) usage
+          exit 2;;
+  esac
+done
+
+if [[ "$USER" == "" ]]
+then
+  USER=`whoami`
+fi
+
+GROUPLIST=`/usr/sbin/lid -n $USER`
+HOMEDIR=`grep "${USER}:x" /etc/passwd | cut -d":" -f6`
+
+debug "USER is set to ,$USER,"
+debug "GROUPLIST is set to ,$GROUPLIST,"
+debug "HOMEDIR is set to ,$HOMEDIR,"
+
+#check there groups to see what role and options they have
+# the order that the groups are checked is important
+if [[ "$WHAT" == "UNSET" ]]; then
+  #check if we are in the ADMIN group
+  for ITEM in $ADMINGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]] 
+    then
+      WHAT="ADMIN"
+      break
+    fi
+  done
+fi
+
+debug "After ADMINGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the production group
+  for ITEM in $PRODGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="PROD"
+      break
+    fi
+  done
+fi
+
+debug "After PRODGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the stage group
+  for ITEM in $STAGEGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="STAGE"
+      break
+    fi
+  done
+fi
+
+debug "After STAGEGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the dev group
+  for ITEM in $PRODSUPGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="PRODSUP"
+      break
+    fi
+  done
+fi
+
+debug "After PRODSUPGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the qa group
+  for ITEM in $QALEADGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="QALEAD"
+      break
+    fi
+  done
+fi
+
+debug "After QALEADGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the qa group
+  for ITEM in $QAGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="QA"
+      break
+    fi
+  done
+fi
+
+debug "After QAGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the dev group
+  for ITEM in $DEVLEADGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="DEVLEAD"
+      break
+    fi
+  done
+fi
+
+debug "After DEVLEADGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT" == "UNSET" ]]; then
+  # check if we are in the dev group
+  for ITEM in $DEVGROUPS
+  do
+    if [[ "$GROUPLIST" == *${ITEM}* ]]
+    then
+      WHAT="DEV"
+      break
+    fi
+  done
+fi
+
+debug "After DEVGROUPS WHAT is set to ,$WHAT,"
+
+if [[ "$WHAT"  == "UNSET" ]]; then
+  # Something went wrong we should never get here. But since we are here default to DEV
+  WHAT="DEV"
+fi
+
+# set the options that get displayed in the menu
+case $WHAT in 
+  ADMIN   ) LISTOPTIONS="$ALLOPTIONS";;
+  PROD    ) LISTOPTIONS="$PRODOPTIONS";;
+  STAGE   ) LISTOPTIONS="$STAGEOPTIONS";;
+  QALEAD  ) LISTOPTIONS="$QALEADOPTIONS";;
+  QA      ) LISTOPTIONS="$QAOPTIONS";;
+  DEVLEAD ) LISTOPTIONS="$DEVLEADOPTIONS";;
+  DEV     ) LISTOPTIONS="$DEVOPTIONS";;
+  PRODSUP ) LISTOPTIONS="$PRODSUPOPTIONS";;
+  *       ) LISTOPTIONS="$DEVOPTIONS";;
+esac
+
+debug "LISTOPTIONS is set to ,$LISTOPTIONS,"
+
+# add the exit option
+LISTOPTIONS="$LISTOPTIONS $EXITOPTION"
+debug "LISTOPTIONS is set to ,$LISTOPTIONS,"
+ 
+while [ 1 = 1 ]; do
+        sub_printmenu
+done
+

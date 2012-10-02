@@ -1,0 +1,173 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+#       Script to transfer files to a remote server
+#
+#
+DATE=`date +%Y%m%d`
+DATETIME=`date +%Y%m%d%H%M%S`
+
+#source in all the servers
+. /usr/local/bin/serverlist
+
+DEFAULTSERVERS="$ALLSERVERS"
+
+DEFAULTREMOTEDIR="/usr/local/bin"
+DEFAULTSSHUSER="USERNAME"
+DEFAULTROWNER="root"
+DEFAULTRGROUP="root"
+DEFAULTRPERMS="755"
+
+#set the variables blank to start
+SERVERS=""
+REMOTEDIR=""
+FILES=""
+SSHUSER=""
+ROWNER=""
+RGROUP=""
+RPERMS=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+
+ echo ""
+ echo "Usage: $0 [options] -f \"file1 [file2 ... fileN]\""
+ echo "		-l /remote_location 			# defaults to $DEFAULTREMOTEDIR"
+ echo "		-s \"server1 [server2 ... serverN]]\" 	# defaults to all servers in serverlist file"
+ echo "		-u user_to_SSH_as			# defaults to $DEFAULTSSHUSER"
+ echo "			NOTE: user must have sudo to root without a password privileges on remote server"
+ echo "		-o remote_user_to_set_as_owner		# defaults to $DEFAULTROWNER"
+ echo "		-g remote_group_to_set			# defaults to $DEFAULTRGROUP"
+ echo "		-p remote_permissions			# defaults to $DEFAULTRPERMS"
+ echo "		-v verbose				# default is off"
+ echo "		-h display this help message				  "
+ echo ""
+ echo "i.e. $SCRIPT -f \"testfile.txt testfile2.txt\""
+ echo ""
+
+}
+
+# determine the number of arguments passed in
+if [[ $# < 1 ]]; then
+ usage
+ exit 2
+fi
+
+while getopts ":l:p:f:s:u:o:g:v" options; do
+  case $options in
+    l ) REMOTEDIR=$OPTARG;;
+    f ) FILES=$OPTARG;;
+    s ) SERVERS=$OPTARG;;
+    u ) SSHUSER=$OPTARG;;
+    o ) ROWNER=$OPTARG;;
+    g ) RGROUP=$OPTARG;;
+    p ) RPERMS=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# files cannot be blank only required argument
+if [[ "$FILES" == "" ]]; then
+  usage
+  exit 4;
+else
+  # we need to chop off the paths if the are there
+  for f in $FILES; do
+        cp $f /tmp/
+	dir=`dirname $f`
+	file=`basename $f`
+	if [[ "$JUSTFILES" == "" ]]; then
+		JUSTFILES="$file"
+		debug "justfiles is ,$JUSTFILES,"
+	else
+		JUSTFILES=$JUSTFILES" $file"
+		debug "justfiles is ,$JUSTFILES,"
+	fi
+  done
+fi
+
+debug "files to transfer is set to $FILES"
+
+# set default value
+if [[ "$REMOTEDIR" == "" ]]; then
+  REMOTEDIR="$DEFAULTREMOTEDIR"
+fi
+
+debug "remote directory is set to $REMOTEDIR"
+
+# set default value
+if [[ "$SERVERS" == "" ]]; then
+  SERVERS="$DEFAULTSERVERS"
+fi
+
+debug "remote servers are set to $SERVERS"
+
+# set default value
+if [[ "$SSHUSER" == "" ]]; then
+  SSHUSER="$DEFAULTSSHUSER"
+fi
+
+debug "USER to ssh as is set to $SSHUSER"
+
+# set default value
+if [[ "$ROWNER" == "" ]]; then
+  ROWNER="$DEFAULTROWNER"
+fi
+
+debug "Remote owner will be set to $ROWNER"
+
+# set default value
+if [[ "$RGROUP" == "" ]]; then
+  RGROUP="$DEFAULTRGROUP"
+fi
+
+debug "Remote group is set to $RGROUP"
+
+# set default value
+if [[ "$RPERMS" == "" ]]; then
+  RPERMS="$DEFAULTRPERMS"
+fi
+
+debug "Remote permissions will be set to $RPERMS"
+
+SUDO="/bin/su - $SSHUSER"
+debug "SUDO is set to ,$SUDO,"
+
+SU="sudo -u root"
+debug "SU is set to ,$SU,"
+
+CDIR=`pwd`
+debug "current directory is $CDIR"
+
+for s in $SERVERS
+ do
+  debug "connecting to $s to scp the files into the /tmp directory"
+  debug "JUSTFILES = ,$JUSTFILES,"
+  $SUDO -c "cd /tmp; scp $FILES $SSHUSER@$s:/tmp/"
+  debug "disconnecting from $s, files are now $s:/tmp"
+  for item in $JUSTFILES
+  do
+    debug "connecting to $s to move the $item  to desired location"
+    $SUDO -c "ssh -t $SSHUSER@$s 'cd /tmp/; $SU mv $REMOTEDIR/$item $REMOTEDIR/$item.$DATETIME; $SU mv -f $item $REMOTEDIR; $SU chown -R $ROWNER:$RGROUP $REMOTEDIR/$item; $SU chmod $RPERMS $REMOTEDIR/$item; exit'"
+    debug "disconnecting from $s.  Files are in desired location with the desired settings :-)"
+    debug
+  done
+done
+

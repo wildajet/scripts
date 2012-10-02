@@ -1,0 +1,134 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to remove a webmail instance
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+HTMLDIR="/var/www/html"
+SPOOLDIR="/var/spool"
+BASENAME="webmail"
+BASEDIR="$HTMLDIR/$BASENAME"
+NEW_NAME=""
+APACHENAME=""
+DOCROOT=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options]  -a APACHE_INSTANCE_NAME -n instance_name"
+ echo "         -n ${BASENAME}_instance_name   # only allowed 20 characters and the last 7 must be webmail"
+ echo "         -a APACHE_INSTANCE             # name of the apache instance we use to host this webmail instance"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -a NAMEhttpd -n NAME${BASENAME}"
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+# determine the number of arguments passed in
+if [[ $# < 4 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts "n:i:p:a:d" options; do
+  case $options in
+    n ) NEW_NAME=$OPTARG;;
+    a ) APACHENAME=$OPTARG;;
+    d ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# APACHENAME
+if [[ "$APACHENAME" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE APACHE INSTANCE we will use to host this webmail instance! \033[0m"
+  usage
+  exit 4
+fi
+debug "the APACHENAME is set to ,$APACHENAME,"
+
+# name cannot be blank it is a required argument
+if [[ "$NEW_NAME" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE $BASENAME INSTANCE NAME! \033[0m"
+  usage
+  exit 5
+fi
+
+debug "$BASENAME instance name is set to ,$NEW_NAME,"
+
+debug "checking for apache instance ${ETC}/${APACHENAME}"
+if [[ ! -d "${ETC}/${APACHENAME}"  ]]
+then
+  echo -e "\033[1;31m \tApache instance ${ETC}/${APACHENAME} does not exist! \033[0m"
+  exit 6
+else
+ if [[ -f ${ETC}/${APACHENAME}/conf/httpd.conf ]]; then
+  DOCROOT=`grep DocumentRoot ${ETC}/${APACHENAME}/conf/httpd.conf | grep -v "#" | cut -d" " -f2 | sed -e 's/"//g'`
+  echo $DOCROOT
+  debug "DocumentRoot for apache instance ,$APACHENAME, is set to ,$DOCROOT,"
+  if [[ ! -d $DOCROOT ]]; then
+    echo -e "\033[1;31m \t${DOCROOT} does not exist! \033[0m"
+    exit 7
+  fi
+ else
+  echo -e "\033[1;31m \t ${ETC}/${APACHENAME}/conf/httpd.conf does not exist! \033[0m"
+ fi
+fi
+
+# Make sure that the webmail directory exists in the DocumentRoot
+if [[ ! -d $DOCROOT/$BASENAME ]]
+then
+  echo -e "\033[1;31m DocumentRoot/webmail i.e. ,$DOCROOT/$BASENAME, doesn't exist! \033[0m"
+  usage
+  exit 8
+fi
+rm -rf $DOCROOT/$BASENAME
+debug " we just did ,rm -rf $DOCROOT/$BASENAME,"
+
+# Make sure the Spool dir exists
+if [[ ! -d $SPOOLDIR/$NEW_NAME ]]
+then
+  echo -e "\033[1;31m The spool directory i.e. ,$SPOOLDIR/$NEW_NAME, doesn't exist! \033[0m"
+  usage
+  exit 9
+fi
+rm -rf $SPOOLDIR/$NEW_NAME
+debug " we just did ,rm -rf $SPOOLDIR/$NEW_NAME,"
+
+#remove the attachments directory to cron to cleanup orphans
+sed -e "s,/usr/sbin/tmpwatch 240 /var/spool/$NEW_NAME/attach/,,g" --in-place /etc/cron.daily/squirrelmail.cron
+
+debug "removed ,/usr/sbin/tmpwatch 240 /var/spool/$NEW_NAME/attach/, from /etc/cron.daily/squirrelmail.cron"
+
+echo ""
+echo -e "\033[1mRemoved webmail from apache instance ,$APACHENAME, from its document root ,$DOCROOT, \033[0m\033[1m"
+echo -e "\033[1m\tAlso removed the entry from /etc/cron.daily/squirrelmail.cron that kept the attachements directory clean. \033[0m\033[1m"
+echo
+echo -e "\033[0m"
+echo
+

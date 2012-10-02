@@ -1,0 +1,246 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to kick of the docroot-rsync for a given environement
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+LOCALDIR=""
+LOCKPATH="/var/www"
+LOCKFILE=""
+ALLENVS="DEV, QA, STAGE, PROD, or ALL"
+ENV=""
+DIRECTION=""
+APACHE="httpd"
+BASEPATH="/var/www"
+ENVDIR=""
+
+DEVSERVERS="DEVSERVER"
+QASERVERS="QASERVER"
+STAGESERVERS="STAGESERVER"
+PRODSERVERS="PRODSERVER1 PRODSERVER2"
+ALLSERVERS="$DEVSERVERS $QASERVERS $STAGESERVERS $PRODSERVERS"
+SERVERS=""
+
+EXE=/usr/local/bin/docroot-rsync
+CHMOD=/bin/chmod
+CHOWN=/bin/chown
+CP=/bin/cp
+RM=/bin/rm
+FIND=/usr/bin/find
+MKDIR=/bin/mkdir
+ECHO=/bin/echo
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+if [[ -e /usr/local/bin/functions ]]
+then
+ . /usr/local/bin/functions
+else
+ $ECHO -e "\033[1;31m missing the /usr/local/bin/functions file.  exiting \033[0m"
+ exit 1
+fi
+
+# make sure script was started by root or exit
+enforceRoot 
+
+#usage directions
+usage () {
+ $ECHO ""
+ $ECHO "Usage: $SCRIPT [options] -e ENVIRONMENT -p PUSH|PULL -l LOCAL_DIRECTORY "
+ $ECHO "         -p PUSH | PULL                 # Tells us to either push the update or pull.  DEFAULTS to push"
+ $ECHO "         -l LOCAL_DIRECTORY             # Local directory that has an $APACHE directory in it" 
+ $ECHO "         -e ENVIRONMENT                 # ENVIRONMENT of either $ALLENVS"
+ $ECHO "         -v verbose (debug)             # default is off"
+ $ECHO "         -h display this help message"
+ $ECHO ""
+ $ECHO " i.e. $SCRIPT -v -e DEV -p PUSH -l /home/DEVUPLOADS"
+ $ECHO ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 6 ]]; then
+ $ECHO -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ $ECHO "Number of arguments passed in is ,$#,"
+ usage
+ exit 2
+fi
+
+while getopts ":p:l:e:vh" options; do
+  case $options in
+    p ) DIRECTION=`$ECHO $OPTARG | tr [:lower:] [:upper:]`;;
+    l ) LOCALDIR=$OPTARG;;
+    e ) ENV=`$ECHO $OPTARG | tr [:lower:] [:upper:]`;;
+    v ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+debug "DIRECTION = ,$DIRECTION,"
+debug "LOCALDIR = ,$LOCALDIR,"
+debug "ENV = ,$ENV,"
+
+if [[ "$DIRECTION" == "" ]]
+then
+  $ECHO -e "\033[1;31m YOU MUST SPECIFY EITHER \"PUSH\" or \"PULL\" with the -p option! \033[0m"
+  usage
+  exit 4
+fi
+
+if [[ "$DIRECTION" != "PUSH" && "$DIRECTION" != "PULL" ]]
+then
+  $ECHO -e "\033[1;31m YOU MUST SPECIFY EITHER \"PUSH\" or \"PULL\" with the -p option! \033[0m"
+  usage
+  exit 5
+fi
+
+if [[ "$LOCALDIR" == "" ]]
+then
+  $ECHO -e "\033[1;31m YOU MUST SPECIFY THE LOCAL DIRECTORY TO COPY FROM! \033[0m"
+  usage
+  exit 6
+fi
+
+if [[ "$ENV" == "" ]]
+then
+  $ECHO -e "\033[1;31m YOU MUST SPECIFY THE ENVIRONMENT ($ALLENVS) WE ARE WORKING WITH! \033[0m"
+  usage
+  exit 7
+fi
+
+if [[ "$ENV" == "ALL" && "$DIRECTION" == "PULL" ]]
+then
+  $ECHO -e "\033[1;31m YOU CAN NOT PULL FROM ALL ENVIRONMENTS! You can only push to all environments. \033[0m"
+  usage
+  exit 8
+fi
+
+case $ENV in
+  DEV ) SERVERS=$DEVSERVERS;;
+  QA ) SERVERS=$QASERVERS;;
+  STAGE ) SERVERS=$STAGESERVERS;;
+  PROD ) SERVERS=$PRODSERVERS;;
+  ALL ) SERVERS=$ALLSERVERS;;
+  * ) $ECHO -e "\033[1;31m YOU MUST SPECIFY THE ENVIRONMENT ($ALLENVS) WE ARE WORKING WITH! \033[0m"
+      usage
+      exit 9;;
+esac
+
+#Make sure the SERVERS variable is set
+if [[ "$SERVERS" == "" ]]
+then
+  $ECHO -e "\033[1;31m UNKNOWN ERROR!  SOMEHOW SERVERS ISN'T SET! \033[0m"
+  exit 10
+fi
+debug "SERVERS is set to ,$SERVERS,"
+
+#check for lock file so we don't run if someone is already running this script
+LOCKFILE="$LOCKPATH/imagesync.$ENV"
+debug "LOCKFILE is set to ,$LOCKFILE,"
+
+# Make sure someone isn't already running this syncing all the environments
+if [[ "$ENV"  != "ALL" ]]
+then
+  if [[ -f $LOCKPATH/imagesync.ALL ]]
+  then
+    $ECHO -e "\033[1;31m Someone is already syncing up the $ENV environment!\n Please Try again Later.\n  If you think you have gotten this message in error, feal free to contact your friendly neighborhood Unix admin :-D. \033[0m"
+    exit 11
+  fi
+fi
+
+if [[ -f $LOCKFILE ]]
+then
+  $ECHO -e "\033[1;31m Someone is already syncing up the $ENV environment!\n Please Try again Later.\n  If you think you have gotten this message in error, feal free to contact your friendly neighborhood Unix admin :-D. \033[0m"
+  exit 12
+fi
+
+touch $LOCKFILE
+debug "LOCKFILE ,$LOCKFILE, created"
+
+ENVDIR=$BASEPATH/$ENV/$APACHE
+debug "ENVDIR is set to ,$ENVDIR,"
+
+#Make sure the Directory above the apache instance name directory exists.
+if [[ ! -d $BASEPATH/$ENV ]]
+then
+  # we should never get here; but if we do create the directory
+  $MKDIR -p $BASEPATH/$ENV 
+  debug "just created ,$BASEPATH/$ENV,"
+fi
+
+# if the apache instance directory is there remove it 
+if [[ -d $ENVDIR ]]
+then
+  $RM -rf $ENVDIR
+  debug "Just removed ,$ENVDIR,"
+fi
+
+#Make sure there is an $APACHE instance name directory in the Local directory
+if [[ ! -d $LOCALDIR/$APACHE ]]
+then
+  $ECHO -e "\033[1;31m You must hav an $APACHE directory in the local directory ,$LOCALDIR, that you passed in! \033[0m"
+  $RM -f $LOCKFILE
+  exit 13
+fi
+
+if [[ "$DIRECTION" == "PUSH" ]]
+then
+  #Copy the apache instance directory from the local directory passed in (which should be their home dir) to the ENV
+  debug "Staring $CP -a $LOCALDIR/$APACHE $BASEPATH/$ENV/"
+  $CP -a $LOCALDIR/$APACHE $BASEPATH/$ENV/
+  cd $BASEPATH/$ENV/
+  $CHOWN -R webadmin:webdeploy $APACHE
+  $CHMOD 777 $APACHE
+  $FIND . -type d -exec chmod g+s {} \;
+  debug "Finished $CP -a $LOCALDIR/$APACHE $BASEPATH/$ENV/, changed ownership and permissions"
+fi
+
+for SERVER in $SERVERS
+do
+ # now call the rsync script to sync it up the the necessary servers
+ if [[ "$DIRECTION" == "PUSH" ]]
+ then
+  debug "about to $EXE -s $SERVER -l $ENVDIR -p PUSH"
+  $EXE -s ${SERVER} -l $ENVDIR -p PUSH 
+  # remove the ENV apache
+ else
+  #Make the directory $ENVDIR
+  mkdir -p $ENVDIR
+  debug "just created directory ,$ENVDIR,"
+  debug "about to $EXE -s $SERVER -l $ENVDIR -p PULL"
+  $EXE -s ${SERVER} -l $ENVDIR -p PULL
+  debug "finished rsync "
+ fi
+done
+
+if [[ "$DIRECTION" == "PULL" ]]
+then
+  debug "copying to local dir i.e. $CP -a $ENVDIR $LOCALDIR/"
+  $CP -a $ENVDIR $LOCALDIR/
+  $CHMOD -R 777 $LOCALDIR/$APACHE
+  debug "$LOCALDIR/$APACHE has been $CHMOD -R 777"
+  cd $LOCALDIR
+  debug "we changed directory to $LOCALDIR"
+  $CHOWN -R webadmin:webdeploy $APACHE
+  debug "$APACHE has been $CHOWN -R webadmin:webdeploy"
+  $FIND . -type d -exec chmod g+s {} \;
+  debug "all the directories have the sticky bit set for user and group"
+fi
+
+# remove the ENV apache
+$RM -rf $ENVDIR
+debug "just removed $ENVDIR"
+
+# remove the lockfile
+$RM -f $LOCKFILE
+debug "removed lockfile $LOCKFILE"

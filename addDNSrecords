@@ -1,0 +1,312 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create DNS reverse and forward records 
+#  	This script assumes a very specific setup
+#
+#
+
+DATE=`date +%Y%m%d`
+SDATE=`date +%Y%m%d_%S`
+CDIR=`pwd`
+DNSBASE="/var/named/chroot"
+MASTERBASE="var/named/masters"
+ENDING="hosts"
+REXT="in-addr.arpa"
+PRE=""
+SUF=""
+NET=""
+NET1=""
+NET2=""
+NET3=""
+NCOUNT=""
+REVNET=""
+MDOMAIN=""
+DOMAIN=""
+DOMAINBASE=""
+DOMAINEND=""
+EMAIL=""
+EMAILNAME=""
+EMAILDOMAIN=""
+REV="TRUE"
+AREC="TRUE"
+AFILE=""
+RFILE=""
+AFOUND=""
+AFCOUNT=0
+RFOUND=""
+RFCOUNT=0
+STARTSEQ=1
+STOPSEQ=255
+SPACES4="    "
+SPACES5="     "
+SPACES6="      "
+DEBUG="FALSE"
+SCRIPT=$0
+
+HOSTNAME=`hostname -s`
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo "         This script will add all the A RECORDS and reverse RECORDS for a /24 i.e. 1-255 if they don't already exist."
+ echo "Usage: $SCRIPT [options] -m MASTERHOST -n NETWORK -f DOMAIN -e CONTACT_EMAIL [-p PREFIX -s SUFFIX -r|-a]"
+ echo "         -m MASTERHOST                  # Domain under $DNSBASE/$MASTERBASE that we should put these record files" 
+ echo "         -i NETWORK                     # first 3 octets of the IP addresses."
+ echo "         -f DOMAIN                      # Domain name that these records will be authoritative for."
+ echo "         -e CONTACT_EMAIL               # Email that is listed at Arin for this domain"
+ echo "         -p PREFIX                      # What to put before the number."
+ echo "         -s SUFFIX                      # What to put after the number and before the domain."
+ echo "         -r                             # Setup the reverse records only"
+ echo "         -a                             # Setup the A records only"
+ echo "       NOTE: if neither -a or -r are set then both will get done."
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -m DOMAIN.com -n 192.168.200 -f DOMAIN.com -e EMAIL -p PREFIX -s SUFFIX"
+ echo ""
+}
+
+
+# determine the number of arguments passed in
+if [[ $# -lt 4 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS ($#) need at least 4! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts "n:m:f:e:p:s:rad" options; do
+  case $options in
+	m ) MDOMAIN=$OPTARG;;
+    n ) NET=$OPTARG;;
+    f ) DOMAIN=$OPTARG;;
+    e ) EMAIL=$OPTARG;;
+    p ) PRE=$OPTARG;;
+    s ) SUF=$OPTARG;;
+    r ) AREC="FALSE";;
+    a ) REV="FALSE";;
+    d ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# NETWORK
+if [[ "$NET" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE NETWORK i.e. first 3 octets of the IP! \033[0m"
+  usage
+  exit 4
+fi
+
+#Check the number of periods to make sure they passed in a network and not an IP
+NCOUNT=`echo "$NET" | perl -lne '$c++ while /\./g; END { print $c; }'`
+if [[ $NCOUNT == 3 ]]
+then
+  debug "\033[1;31m YOU ENTERED AN IP vs. A NETWORK, CHOPPING OFF LAST OCTET FOR YOU :-)! \033[0m"
+  # an IP not a network was passed in, chop off the last octet
+  NET=`echo $NET | cut -d"." -f1,2,3`
+fi
+
+NET1=`echo $NET | cut -d'.' -f1`
+NET2=`echo $NET | cut -d'.' -f2`
+NET3=`echo $NET | cut -d'.' -f3`
+REVNET=$NET3.$NET2.$NET1 
+debug "the NET is set to ,$NET,"
+debug "the REVNET is set to ,$REVNET,"
+debug "the NET1 is set to ,$NET1,"
+debug "the NET2 is set to ,$NET2,"
+debug "the NET3 is set to ,$NET3,"
+
+# Master/owner DOMAIN of all the host records
+if [[ "$MDOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE MASTERDOMAIN for these DNS records! \033[0m"
+  usage
+  exit 5
+fi
+
+if [[ ! -d "$DNSBASE/$MASTERBASE/$MDOMAIN" ]]
+then
+  echo -e "\033[1;31m The records directory $DNSBASE/$MASTERBASE/$MDOMAIN doesn't exist.  Run mkDnsView to set it up! \033[0m"
+  usage
+  exit 6  
+fi
+
+# DOMAIN
+if [[ "$DOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE DOMAIN for these DNS configs and records! \033[0m"
+  usage
+  exit 7
+fi
+# Strip of the extension to get the base name of the domain
+DOMAINBASE=`echo $DOMAIN | cut -d'.' -f1`
+DOMAINEND=`echo $DOMAIN | cut -d'.' -f2`
+debug "the DOMAINBASE is set to ,$DOMAINBASE,"
+debug "the DOMAINEND is set to ,$DOMAINEND,"
+debug "the DOMAIN is set to ,$DOMAIN,"
+
+# EMAIL
+if [[ "$EMAIL" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE EMAIL address of the Contact for this domain! \033[0m"
+  usage
+  exit 8
+fi
+# seperate out the parts of the EMAIL if they put more then just the front name
+EMAILNAME=`echo $EMAIL | cut -d'@' -f1`
+EMAILDOMAIN=`echo $EMAIL | cut -d'@' -f2`
+debug "the EMAIL is set to ,$EMAIL,"
+debug "the EMAILNAME is set to ,$EMAILNAME,"
+debug "the EMAILDOMAIN is set to ,$EMAILDOMAIN,"
+
+#if the email name and domain is the same then they didn't specify the domain so assume the DNS domain
+if [[ "$EMAILNAME" == "$EMAILDOMAIN" ]]; then
+  EMAILDOMAIN=""
+fi
+
+if [[ "$REV" == "FALSE" && "$AREC" == "FALSE" ]]
+then
+  echo -e "\033[1;31m YOU CAN NOT SPECIFY BOTH -r and -a!  ONLY SET 1 or NONE. \033[0m"
+  usage
+  exit 9
+fi
+debug "REV is set to ,$REV,"
+debug "AREC is set to ,$AREC,"
+
+debug "PRE is set to ,$PRE,"
+debug "SUF is set to ,$SUF,"
+
+if [[ "$AREC" == "TRUE" ]]
+then
+  AFILE="$DNSBASE/$MASTERBASE/$MDOMAIN/$DOMAIN.$ENDING"
+  if [[ ! -e "$AFILE" ]]
+  then
+    echo -e "\033[1;31m The A RECORD file ($AFILE) does not exist creating it! \033[0m"
+    /bin/touch $AFILE
+    echo "\$TTL 1h" >> $AFILE
+    echo ";" >> $$AFILE
+    echo "; Origin added to names not ending" >> $AFILE
+    echo "; in a dot: $DOMAIN" >> $AFILE
+    echo ";" >> $AFILE
+    echo "@ IN SOA ns1.$DOMAIN. $EMAILNAME.$DOMAIN. (" >> $AFILE
+    echo "                ${DATE}01         ; Serial" >> $AFILE
+    echo "                1h                ; Refresh after 3 hours" >> $AFILE
+    echo "                30m               ; Retry after 1 hour" >> $AFILE
+    echo "                1d                ; Expire after 1 week" >> $AFILE
+    echo "                1h )              ; Negative caching TTL of 1 hour" >> $AFILE
+    echo ";" >> $AFILE
+    echo "; Name servers (The name '@' is implied)" >> $AFILE
+    echo ";" >> $AFILE
+    echo "        IN NS  ns1.$DOMAIN." >> $AFILE
+    echo "        IN NS  ns2.$DOMAIN." >> $AFILE
+    echo "; MX records (The name '@' is implied)" >> $AFILE
+    echo "        IN MX 10 mail" >> $AFILE
+    echo ";" >> $AFILE
+    echo "; Addresses for the canonical names" >> $AFILE
+    echo ";" >> $AFILE
+
+  fi
+fi
+
+if [[ "$REV" == "TRUE" ]]
+then
+  RFILE="$DNSBASE/$MASTERBASE/$MDOMAIN/$REVNET.$REXT.$ENDING"
+  if [[ ! -e "$RFILE" ]]
+  then
+    echo -e "\033[1;31m The reverse RECORD file ($RFILE) does not exist creating it! \033[0m"
+    /bin/touch $RFILE
+    echo "\$TTL 1h" >> $RFILE
+    echo ";" >> $RFILE
+    echo "; Origin added to names not ending" >> $RFILE
+    echo "; in a dot: $REVNET.in-addr.arpa" >> $RFILE
+    echo ";" >> $RFILE
+    echo "@ IN SOA ns1.$DOMAIN. $EMAILNAME.$DOMAIN. (" >> $RFILE
+    echo "        ${DATE}01       ; Serial" >> $RFILE
+    echo "        1h              ; Refresh after 3 hours" >> $RFILE
+    echo "        30m             ; Retry after 1 hour" >> $RFILE
+    echo "        1d              ; Expire after 1 week" >> $RFILE
+    echo "        1h )            ; Negative caching TTL of 1 hour" >> $RFILE
+    echo ";" >> $RFILE
+    echo "; Name servers (The name '@' is implied)" >> $RFILE
+    echo ";" >> $RFILE
+    echo "        IN NS  ns1.$DOMAIN." >> $RFILE
+    echo "        IN NS  ns2.$DOMAIN." >> $RFILE
+    echo ";" >> $RFILE
+    echo "; Addresses point to canonical names" >> $RFILE
+    echo ";" >> $RFILE
+  fi
+ 
+fi
+
+for N in `seq $STARTSEQ $STOPSEQ`
+do
+  #debug "N is ,$N,"
+  ARECORDESC=""   
+  RRECORDESC=""
+  SPACES=""
+  # Format the record string
+  if [[ $N -lt 10 ]]; then
+    SPACES=${SPACES6}
+  elif [[ ( $N -ge 10 ) && ( $N -lt 100 ) ]]; then
+    SPACES=${SPACES5}
+  else
+    SPACES=${SPACES4}
+  fi
+
+  if [[ "$AREC" == "TRUE" ]]
+  then
+    ARECORD="${PRE}${N}${SUF}${SPACES}IN A ${NET}.${N}"
+    AFOUND=`grep -E "${NET1}\.${NET2}\.${NET3}\.${N}$" $AFILE | grep -v "#" | grep -v ";"`
+    AFCOUNT=`grep -E "${NET1}\.${NET2}\.${NET3}\.${N}$" $AFILE | grep -v "#" | grep -v ";" | wc -l`
+    debug "NEW A RECORD is set to ,$ARECORD,"
+    debug "AFOUND is set to ,$AFOUND,"
+    debug "AFCOUNT is set to ,$AFCOUNT,"
+   
+    if [[ $AFCOUNT -gt 0 ]]
+    then
+      echo "Found a record ,$AFOUND, not adding ,$ARECORD,!"
+      continue
+    else 
+      echo -e "$ARECORD" >> $AFILE
+    fi
+  fi
+
+  if [[ "$REV" == "TRUE" ]]
+  then
+    RRECORD="${N}${SPACES}IN PTR ${PRE}${N}${SUF}.${DOMAIN}."
+    RFOUND=`grep -E "${PRE}${N}${SUF}\.${DOMAINBASE}\.${DOMAINEND}\.$" $RFILE | grep -v "#" | grep -v ";"`
+    RFCOUNT=`grep -E "${PRE}${N}${SUF}\.${DOMAINBASE}\.${DOMAINEND}\.$" $RFILE | grep -v "#" | grep -v ";" | wc -l`
+    debug "NEW reverse RECORD is set to ,$RRECORD,"
+    debug "RFOUND is set to ,$RFOUND,"
+    debug "RFCOUNT is set to ,$RFCOUNT,"
+   
+    if [[ $RFCOUNT -gt 0 ]]
+    then
+      echo "Found record ,$RFOUND, not adding ,$RRECORD,!"
+      continue
+    else
+      echo -e "$RRECORD" >> $RFILE
+    fi
+  fi
+done  
+
+echo ""
+echo -e "\033[1mDNS Records have been added\033[0m\033[1m"
+echo
+echo -e "\033[1mYou may need to edit the configuration files in(\033[0m\033[1;31m/var/named/chroot/etc\033[0m\033[1m)"
+echo -e "\033[0m"
+

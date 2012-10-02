@@ -1,0 +1,202 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to create a squiremail instance by copying another one
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+HTMLDIR="/var/www/html"
+SPOOLDIR="/var/spool"
+BASENAME="webmail"
+BASEDIR="$HTMLDIR/$BASENAME"
+NEW_NAME=""
+NAMELIMIT=30
+IP=""
+HOSTNAME=""
+POSTNAME=""
+APACHENAME=""
+DOCROOT=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -i IMAP_IP -p POSTFIX_INSTANCE_NAME -a APACHE_INSTANCE_NAME -n instance_name"
+ echo "         -n ${BASENAME}_instance_name       # only allowed 20 characters and the last 7 must be webmail"
+ echo "         -i IMAP_IP_ADDRESS             # IP address of the IMAP server that we are connecting to"
+ echo "         -p POSTFIX_INSTANCE            # name of the postfix instance we use to sendmail i.e. NAMEpostfix etc."
+ echo "         -a APACHE_INSTANCE             # name of the apache instance we use to host this webmail instance"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -i 192.168.200.233 -p NAMEpostfix -a NAMEhttpd -n NAME${BASENAME}"
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+# determine the number of arguments passed in
+if [[ $# < 8 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ usage
+ exit 2
+fi
+
+while getopts "n:i:p:a:d" options; do
+  case $options in
+    n ) NEW_NAME=$OPTARG;;
+    i ) IP=$OPTARG;;
+    p ) POSTNAME=$OPTARG;;
+    a ) APACHENAME=$OPTARG;;
+    d ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# POSTNAME
+if [[ "$POSTNAME" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE POSTFIX INSTANCE we will use to send mail! \033[0m"
+  usage
+  exit 4
+fi
+debug "the POSTNAME is set to ,$POSTNAME,"
+
+# APACHENAME
+if [[ "$APACHENAME" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE APACHE INSTANCE we will use to host this webmail instance! \033[0m"
+  usage
+  exit 5
+fi
+debug "the APACHENAME is set to ,$APACHENAME,"
+
+# IP
+if [[ "$IP" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IMAP SERVER IP this INSTANCE will use! \033[0m"
+  usage
+  exit 6
+fi
+debug "the IP is set to ,$IP,"
+
+# name cannot be blank it is a required argument
+if [[ "$NEW_NAME" == "" ]] 
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE $BASENAME INSTANCE NAME! \033[0m"
+  usage
+  exit 7
+fi
+
+enforceNameLength $NEW_NAME $BASENAME $NAMELIMIT
+RETVAL=$?
+if [[ $RETVAL > 0 ]]; then
+ usage
+ exit 8
+fi
+
+debug "$BASENAME instance name is set to ,$NEW_NAME,"
+
+# Check and make sure the name isn't already used
+cd $SPOOLDIR
+USED=`ls -d *${BASENAME}*`
+debug "list of currently used $BASENAME instance names ,$USED,"
+for NAME in $USED
+do
+ debug "NAME is ,$NAME, and NEW_NAME is ,$NEW_NAME,"
+ if [ "$NEW_NAME" == "$NAME" ]
+ then
+  echo -e "\033[1;31mPICK A NEW NAME that name ($NEW_NAME) is already used!\033[0m"
+  echo "exiting"
+  exit 9
+ fi
+done
+
+debug "checking for template directory ${HTMLDIR}/${BASENAME}"
+# Make sure the template directory 
+if [[ ! -d "${HTMLDIR}/${BASENAME}"  ]]
+then
+  echo -e "\033[1;31m THIS MACHINE IS NOT SETUP TO RUN WEBMAIL (SquirrelMail) \033[0m"
+  echo -e "\033[1;31m \t${HTMLDIR}/${BASENAME} does not exist! \033[0m"
+  exit 10
+fi
+
+debug "checking for template directory ${SPOOLDIR}/${BASENAME}"
+# Make sure the template directory
+if [[ ! -d "${SPOOLDIR}/${BASENAME}"  ]]
+then
+  echo -e "\033[1;31m THIS MACHINE IS NOT SETUP TO RUN WEBMAIL (SquirrelMail) \033[0m"
+  echo -e "\033[1;31m \t${SPOOLDIR}/${BASENAME} does not exist! \033[0m"
+  exit 11
+fi
+
+debug "checking for apache instance ${ETC}/${APACHENAME}"
+if [[ ! -d "${ETC}/${APACHENAME}"  ]]
+then
+  echo -e "\033[1;31m \tApache instance ${ETC}/${APACHENAME} does not exist! \033[0m"
+  exit 12
+else
+ if [[ -f ${ETC}/${APACHENAME}/conf/httpd.conf ]]; then
+  DOCROOT=`grep DocumentRoot ${ETC}/${APACHENAME}/conf/httpd.conf | grep -v "#" | cut -d" " -f2 | sed -e 's/"//g'`
+  echo $DOCROOT
+  debug "DocumentRoot for apache instance ,$APACHENAME, is set to ,$DOCROOT,"
+  if [[ ! -d $DOCROOT ]]; then
+    echo -e "\033[1;31m \t${DOCROOT} does not exist! \033[0m"
+    exit 13
+  fi
+ else
+  echo -e "\033[1;31m \t ${ETC}/${APACHENAME}/conf/httpd.conf does not exist! \033[0m"
+  exit 14
+ fi
+fi
+
+# OK copy /var/www/html/webmail into the document root for the apache instance we said
+cp -a $BASEDIR $DOCROOT/
+debug " we just did ,cp -a $BASEDIR $DOCROOT/,"
+
+# copy the Data and attachemts directory
+cp -a $SPOOLDIR/$BASENAME $SPOOLDIR/$NEW_NAME
+debug " we just ,cp -a $SPOOLDIR/$BASENAME $SPOOLDIR/$NEW_NAME,"
+
+debug "changing the webmail configuration file ,$DOCROOT/$BASENAME/config/config.php,"
+# fix up the squirrelmail configuration file a little bit
+sed -e "s/$imapServerAddress      = '192.168.200.233';/$imapServerAddress      = '$IP';/g" -e "s/$sendmail_args          = '-i -t -C \/etc\/postfix';/$sendmail_args          = '-i -t -C \/etc\/$POSTNAME';/g" --in-place $DOCROOT/$BASENAME/config/config.php
+
+sed -e "s/$data_dir                 = '\/var\/spool\/webmail\/prefs\/';/$data_dir                 = '\/var\/spool\/$NEW_NAME\/prefs\/';/g" -e "s/$attachment_dir           = '\/var\/spool\/webmail\/attach\/';/$attachment_dir           = '\/var\/spool\/$NEW_NAME\/attach\/';/g" --in-place $DOCROOT/$BASENAME/config/config.php
+
+# change the PHP code to have the IP of the mail server instead of the IP of the machine the user logins in from
+# first back up the file
+cp -a $DOCROOT/$BASENAME/class/deliver/Deliver.class.php $DOCROOT/$BASENAME/class/deliver/Deliver.class.php.$DATE
+sed -e 's/\t$received_from = "localhost (127.0.0.1)";/\t$received_from = '"\"$IP\""';/g' -e 's/\t$REMOTE_ADDR = "127.0.0.1";/\t$REMOTE_ADDR = '"\"$IP\""';/g' --in-place $DOCROOT/$BASENAME/class/deliver/Deliver.class.php
+debug "just backed up and changed ,$DOCROOT/$BASENAME/class/deliver/Deliver.class.php,"
+
+#add the attachments directory to cron to cleanup orphans
+echo "/usr/sbin/tmpwatch 240 /var/spool/$NEW_NAME/attach/" >> /etc/cron.daily/squirrelmail.cron
+debug "added ,/usr/sbin/tmpwatch 240 /var/spool/$NEW_NAME/attach/, to /etc/cron.daily/squirrelmail.cron"
+
+echo ""
+echo -e "\033[1mAdded webmail to apache instance ,$APACHENAME, in its document root ,$DOCROOT, \033[0m\033[1m"
+echo -e "\033[1m\tAlso added an entry to /etc/cron.daily/squirrelmail.cron to keep the attachements directory clean. \033[0m\033[1m"
+echo
+echo -e "\033[1mYou may need to edit the configuration file (\033[0m\033[1;31m$DOCROOT/webmail/config/config.php\033[0m\033[1m)"
+echo -e "\033[1m \033[0m \033[1;31m NOTE: \033[0m\033[1m you can run \033[0m\033[1;31m$DOCROOT/webmail/config/conf.pl\033[0m\033[1m to do the configuration for you!\033[0m\033[1m"
+echo -e "\033[0m"
+echo
+

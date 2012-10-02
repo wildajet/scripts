@@ -1,0 +1,148 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	Script that takes the values from a configuration file and generates a CSR
+#
+
+TODAY=`date +%Y%m%d`
+
+USRBIN=/usr/local/bin
+CURRENTDIR=`pwd`
+KEYPATH=/etc/pki/tls/private
+CSRPATH=/etc/pki/tls/csr
+CSRFILE=""
+KEYFILE=""
+DOMAIN=""
+# You will want to modify the csr.conf file
+TMPCONF=$USRBIN/csr.conf
+KEYSET="FALSE"
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -d DOMAIN.TLD"
+ echo "         -d DOMAIN.TLD                  # the domain name to generate this CSR for"
+ echo "         -c CSR_FILE                    # CSR file to generate; Defaults to $CSRPATH/DOMAIN.TLD.csr"
+ echo "         -k KEY_FILE                    # KEY file to use;  If not specified it generates the key $KEYPATH/DOMAIN.TLD.key"
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d SOME_NAME.com"
+ echo ""
+}
+
+# determine the name of the new apache instance
+if [[ $# < 1 ]]; then
+ usage
+ exit 2
+fi
+
+
+while getopts "d:c:k:v" options; do
+  case $options in
+    d ) DOMAIN=$OPTARG;;
+    c ) CSRFILE=$OPTARG;;
+    k ) KEYFILE=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+# name cannot be blank it is a required argument
+if [[ "$DOMAIN" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE DOMAIN NAME! \033[0m"
+  usage
+  exit 4
+fi
+
+
+echo -ne "\033[1mIs\033[1;31m $DOMAIN \033[0m\033[1mthe correct domain (y,n)[y]: \033[0m"
+read response
+echo
+
+if [ "$response" = "N" ]
+then
+	response="n"
+fi
+
+#echo "response = $response"
+
+while [ "$response" = "n" ]
+do
+	echo -ne "\033[1mEnter domain name: \033[0m"
+	read DOMAIN
+
+	echo -ne "\033[1mIs\033[1;31m $DOMAIN \033[0m\033[1mthe correct domain (y,n)[y]: \033[0m"
+	read response
+	echo
+
+	if [ "$response" = "N" ]
+	then
+        	response="n"
+	fi
+
+done
+
+if [[ "$KEYFILE" == "" ]]
+then
+ KEYFILE=$KEYPATH/$DOMAIN.key
+ if [[ -f $KEYFILE ]]
+ then
+  KEYFILE=$KEYPATH/$DOMAIN.key.$TODAY
+ fi
+else
+ KEYSET="TRUE"
+fi
+
+if [[ ! -d $CSRPATH ]]
+then
+ mkdir -p $CSRPATH
+fi
+
+if [[ "$CSRFILE" == "" ]]
+then
+ CSRFILE=$CSRPATH/$DOMAIN.csr
+ if [[ -f $CSRFILE ]]
+ then
+  CSRFILE=$CSRPATH/$DOMAIN.csr.$TODAY
+ fi
+else
+ if [[ -f $CSRFILE ]]
+ then
+  echo -e "\033[1;31m CSRFILE ,$CSRFILE, already exists!  Exiting \033[0m"
+  exit 5
+ fi
+fi
+
+sed -e "s/www.your_domain_name.com/$DOMAIN/g" $TMPCONF > $USRBIN/$DOMAIN.conf
+
+if [[ "$KEYSET" == "TRUE" ]]
+then
+ openssl req -config $USRBIN/$DOMAIN.conf -outform PEM -key $KEYFILE -out $CSRFILE -new
+else
+ openssl req -config $USRBIN/$DOMAIN.conf -rand /tmp -newkey rsa:2048 -nodes -outform PEM -keyout $KEYFILE -out $CSRFILE
+fi
+
+rm -f $USRBIN/$DOMAIN.conf
+
+echo
+echo -e "\033[0m\033[1mYour key file is\033[0m\033[1;31m $KEYFILE\033[0m\033[1m"
+echo -e "Your certificate request file is\033[0m\033[1;31m $CSRFILE\033[0m"
+echo

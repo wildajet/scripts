@@ -1,0 +1,125 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to add an IP alias to a Redhat/CentOs box and create the file so it will survive a reboot
+#
+
+DATE=`date +%Y%m%d`
+SDATE=`date +%Y%m%d_%S`
+CDIR=`pwd`
+ETC=/etc
+WHERE=${ETC}/sysconfig/network-scripts
+IP=""
+NETMASK=""
+INTERFACE=""
+DEBUG="FALSE"
+SCRIPT=$0
+IFCONFIG=/sbin/ifconfig
+
+HOSTNAME=`hostname -s`
+
+# source in the helper functions
+if [ -f /usr/local/bin/functions ]; then
+  . /usr/local/bin/functions
+fi
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -i IP -m NETMASK -n INTERFACE"
+ echo "         -i IP                          # IP address to add to the box"
+ echo "         -m NETMASK                     # NETMASK for a /24 would be 255.255.255.0"
+ echo "         -n INTERFACE                   # INTERFACE i.e. eth0 or eth1, etc"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -i 192.168.10.2 -m 255.255.255.0 -n eth0"
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+# determine the number of arguments passed in
+if [[ $# -lt 5 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS (,$#,)! \033[0m"
+ usage
+ exit 1
+fi
+
+while getopts "n:f:e:i:m:w:p:b:sd" options; do
+  case $options in
+    i ) IP=$OPTARG;;
+    m ) NETMASK=$OPTARG;;
+    n ) INTERFACE=$OPTARG;;
+    d ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 2;;
+    * ) usage
+          exit 2;;
+  esac
+done
+
+# IP
+if [[ "$IP" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE IP! \033[0m"
+  usage
+  exit 3
+fi
+
+debug "IP is ,$IP,"
+
+# NETMASK
+if [[ "$NETMASK" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE NETMASK! \033[0m"
+  usage
+  exit 4
+fi
+
+debug "NETMASK is ,$NETMASK,"
+
+# INTERFACE
+if [[ "$INTERFACE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE INTERFACE! \033[0m"
+  usage
+  exit 5
+fi
+
+debug "INTERFACE is ,$INTERFACE,"
+
+# figure out what the next alias number should be
+cd ${WHERE}
+USED=`ls ifcfg-${INTERFACE}:* | grep -v bak | grep -v lo |cut -d":" -f2 | sort -nr`
+LAST=`echo $USED | cut -d" " -f1`
+NEXT=$((LAST + 1))
+
+if [ -f ${WHERE}/ifcfg-${INTERFACE}:${NEXT} ]; then
+    echo "something went wrong there is already an interface ${WHERE}/ifcfg-${INTERFACE}:${NEXT}"
+    exit 6
+fi
+
+echo "DEVICE=${INTERFACE}:${NEXT}" >> ${WHERE}/ifcfg-${INTERFACE}:${NEXT}
+echo "BOOTPROTO=static" >> ${WHERE}/ifcfg-${INTERFACE}:${NEXT}
+echo "IPADDR=${IP}" >> ${WHERE}/ifcfg-${INTERFACE}:${NEXT}
+echo "NETMASK=${NETMASK}" >> ${WHERE}/ifcfg-${INTERFACE}:${NEXT}
+echo "ONBOOT=yes" >> ${WHERE}/ifcfg-${INTERFACE}:${NEXT}
+
+/sbin/ifconfig ${INTERFACE}:${NEXT} ${IP} netmask ${NETMASK} up
+
+echo ""
+echo -e "\033[1mThe new ip ($IP) has been added to the system \033[0m\033[1m"
+echo -e "It has also been setup to start on boot (\033[0m\033[1;31m${WHERE}/ifcfg-${INTERFACE}:${NEXT}\033[0m\033[1m)"
+echo
+echo -e "\033[0m"
+echo
+

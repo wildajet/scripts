@@ -1,0 +1,153 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to rsync over ssh a web servers document root
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+USER="USERNAME"
+LOGPATH="/tmp"
+LOGFILE=""
+DOCROOT="/var/www/httpd"
+DIRECTION="PUSH"
+LDIR="$DOCROOT"
+RDIR="$DOCROOT"
+SERVERS=""
+EXCLUDES="some/dir some/dir2"
+EXCLUDE=""
+SSH=/usr/bin/ssh
+RSYNC=/usr/bin/rsync
+
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+if [[ -e /usr/local/bin/functions ]]
+then
+ . /usr/local/bin/functions
+else
+ echo -e "\033[1;31mmissing the /usr/local/bin/functions file.  exiting \033[0m"
+ exit 1
+fi
+
+# source in the server list
+if [[ -e /usr/local/bin/serverlist ]]
+then
+ . /usr/local/bin/serverlist
+else
+ echo -e "\033[1;31mmissing the /usr/local/bin/serverlist file. exiting \033[0m"
+ exit 2
+fi
+
+# Make sure they are either root or the user we need
+if [[ `id -u` == "0" ]]; then
+  SUDO="/bin/su - $USER -c"
+elif [[ `whoami` == "$USER" ]]; then
+  SUDO=""
+else
+  echo -e "\033[1;31mSorry, you must be either root or $USER to run this script! \033[0m" 
+  exit 3
+fi
+
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -s \"REMOTE_SERVER(S)\""
+ echo "         -u USERNAME                    # user to ssh and rsync as needs to be setup to SSH with out a passwd. DEFAULTS to webadmin"
+ echo "         -p PUSH | PULL                 # Tells us to either push the update or pull.  DEFAULTS to push"
+ echo "         -l LOCAL_DIRECTORY             # Local directory to be synced. DEFAULTS to $DOCROOT"
+ echo "         -s REMOTE_SERVER(S)            # Remote server(s) to sync to or from."
+ echo "         -r REMOTE_DIRECTORY            # Remote directory to be synced. DEFAULTS to $DOCROOT"
+ echo "         -e EXCLUDE_PATTERN             # Pattern(s) to exclude space seperated.  DEFAULTS to \"$EXCLUDES\""
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -v -s 192.168.200.233"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# -lt 2 ]]; then
+ echo -e "\033[1;31m WRONG NUMBER OF ARGUMENTS! \033[0m"
+ echo "Number of arguments passed in is ,$#,"
+ usage
+ exit 4
+fi
+
+while getopts "u:p:l:s:r:e:vuh" options; do
+  case $options in
+    u ) USER=$OPTARG;; 
+    p ) DIRECTION=`echo $OPTARG | tr [:lower:] [:upper:]`;;
+    l ) LDIR=$OPTARG;;
+    s ) SERVERS=$OPTARG;;
+    r ) RDIR=$OPTARG;;
+    e ) EXCLUDES=$OPTARG;;
+    v ) setDebug "TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 5;;
+    * ) usage
+          exit 5;;
+  esac
+done
+
+debug "SUDO is set to ,$SUDO,"
+debug "USER = ,$USER,"
+debug "DIRECTION = ,$DIRECTION,"
+debug "LDIR = ,$LDIR,"
+debug "SERVERS = ,$SERVERS,"
+debug "RDIR = ,$RDIR,"
+debug "EXCLUDES = ,$EXCLUDES,"
+
+if [[ "$SERVERS" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE REMOTE_SERVER(S)! \033[0m"
+  usage
+  exit 6
+fi
+
+if [[ "$DIRECTION" != "PUSH" && "$DIRECTION" != "PULL" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY EITHER \"PUSH\" or \"PULL\" with the -p option! \033[0m"
+  usage
+  exit 7
+fi
+
+# Create the exclusion directive
+for e in $EXCLUDES
+do
+ if [[ "$EXCLUDE" == "" ]]; then
+  EXCLUDE="--exclude=$e"
+ else
+  EXCLUDE="$EXCLUDE --exclude=$e"
+ fi
+done
+
+# Loop through the server list do the sync
+for SERVER in $SERVERS
+do
+ if [[ "$DIRECTION" == "PUSH" ]]
+ then
+   LOGFILE="$LOGPATH/docroot-rsync.push.$SERVER.`date +%Y%m%d%H%M%S`.log"
+  # PUSH the changes from here
+  if [[ `id -u` == "0" ]]; then
+    $SUDO "$RSYNC -auvhz --stats $EXCLUDE $LDIR/ -e $SSH $USER@$SERVER:$RDIR/ > $LOGFILE 2>&1"
+  else
+    $RSYNC -auvhz --stats $EXCLUDE $LDIR/ -e $SSH $USER@$SERVER:$RDIR/ > $LOGFILE 2>&1
+  fi
+ else
+   LOGFILE="$LOGPATH/docroot-rsync.pull.$SERVER.`date +%Y%m%d%H%M%S`.log"
+  #Pull the changes from the remote server
+  if [[ `id -u` == "0" ]]; then
+    $SUDO "$RSYNC -auvhz --stats $EXCLUDE -e $SSH $USER@$SERVER:$RDIR/ $LDIR/ > $LOGFILE 2>&1" 
+  else
+    $RSYNC -auvhz --stats $EXCLUDE -e $SSH $USER@$SERVER:$RDIR/ $LDIR/ > $LOGFILE 2>&1
+  fi
+ fi
+done

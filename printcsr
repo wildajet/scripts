@@ -1,0 +1,47 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	Script to print out the details of a CSR (Certificate signing Request)
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+DEBUG="FALSE"
+SCRIPT=$0
+
+# make sure they are root otherwise exit
+if [ `id -u` != "0" ]; then
+        echo -e "\033[1;31mSorry, you must be root to run this script! \033[0m"
+        exit 1
+fi
+
+# if -d verbosity will cause the debug statements to print.
+debug () {
+ # function to echo out messages
+ if [[ "$DEBUG" == "TRUE" ]]; then
+  echo -e "$1"
+ fi
+}
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT CSR_FILE"
+ echo ""
+ echo " i.e. $SCRIPT /sw/ssl.csr/rkm-dev.tampa.paymentech.com.csr"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 1 ]]; then
+ usage
+ exit 2
+fi
+
+CSRFILE=$1
+
+openssl req -in $CSRFILE -text

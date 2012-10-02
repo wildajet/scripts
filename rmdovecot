@@ -1,0 +1,118 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to remove a dovecot IMAP POP3 server instance
+#
+
+DATE=`date +%Y%m%d`
+CDIR=`pwd`
+ETC=/etc
+SPOOLDIR="/var/spool"
+RUNDIR="/var/run"
+BASENAME="dovecot"
+BASEDIR="$ETC/$BASENAME"
+NEW_NAME=""
+IP=""
+EMAIL=""
+SPOOLNAME=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# make sure they are root otherwise exit
+if [ `id -u` != "0" ]; then
+        echo -e "\033[1;31mSorry, you must be root to run this script! \033[0m"
+        exit 1
+fi
+
+# if -d verbosity will cause the debug statements to print.
+debug () {
+ # function to echo out messages
+ if [[ "$DEBUG" == "TRUE" ]]; then
+  echo -e "$1"
+ fi
+}
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -n instance_name"
+ echo "         -n ${BASENAME}_instance_name   # only allowed 20 characters and the last 7 must be postfix"
+ echo "         -d verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -d -n NAME${BASENAME}"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# < 1 ]]; then
+ usage
+ exit 2
+fi
+
+while getopts "n:i:f:d" options; do
+  case $options in
+    n ) NEW_NAME=$OPTARG;;
+    d ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+debug "$BASENAME instance to be removed is set to $NEW_NAME"
+
+# name cannot be blank it is a required argument
+if [[ "$NEW_NAME" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE $BASENAME INSTANCE NAME! \033[0m"
+  usage
+  exit 4
+fi
+
+# Check and make sure the configuration directory exists
+if [[ ! -d "$ETC/$NEW_NAME" ]]
+then
+  echo -e "\033[1;31m THIS MACHINE DOES NOT HAVE THE $BASENAME INSTANCE $NEW_NAME ON IT! \033[0m"
+  echo -e "\033[1;31m \t $ETC/$NEW_NAME does not exist! \033[0m"
+  exit 5
+fi
+debug "removing the configuration directory $ETC/$NEW_NAME"
+rm -rf $ETC/$NEW_NAME
+
+# Check and make sure the run directory exists
+if [[ ! -d "$RUNDIR/$NEW_NAME" ]]
+then
+  echo -e "\033[1;31m THIS MACHINE DOES NOT HAVE THE $BASENAME INSTANCE $NEW_NAME ON IT! \033[0m"
+  echo -e "\033[1;31m \t $RUNDIR/$NEW_NAME does not exist! \033[0m"
+  exit 6
+fi
+debug "removing the run directory $RUNDIR/$NEW_NAME"
+rm -rf $RUNDIR/$NEW_NAME
+
+# Check and make sure the spool directory exists
+if [[ ! -f "$ETC/sysconfig/$NEW_NAME" ]]
+then
+  echo -e "\033[1;31m OPTIONS FILE $ETC/sysconfig/$NEW_NAME doesn't exist! \033[0m"
+  exit 7
+fi
+debug "removing the options file $ETC/sysconfig/$NEW_NAME"
+rm -f $ETC/sysconfig/$NEW_NAME
+
+#remove the start up stuff
+/sbin/chkconfig --del $NEW_NAME
+rm -f /etc/init.d/$NEW_NAME
+
+echo -e "\033[1m$BASENAME instance $NEW_NAME has been removed (\033[0m\033[1;31m/etc/$NEW_NAME\033[0m\033[1m)"
+echo -e "The start script has been removed (\033[0m\033[1;31m/etc/init.d/$NEW_NAME\033[0m\033[1m)"
+echo -e "The options file has been removed (\033[0m\033[1;31m/etc/sysconfig/$NEW_NAME\033[0m\033[1m)"
+echo -e "The run directory has been removed (\033[0m\033[1;31m$RUNDIR/$NEW_NAME\033[0m\033[1m)"
+echo
+echo -e "bye ;-)\033[0m"
+
