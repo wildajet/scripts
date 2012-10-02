@@ -1,0 +1,34 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+# 	script to kick of traces via tcpdump
+# 	This script assumes it is in /usr/local/bin
+#
+
+# date and time of the format 20080306
+DATE=`date +"%Y%m%d"`
+HOSTNAME=`hostname -s`
+
+EXEPATH=/usr/sbin
+TCPDUMP=$EXEPATH/tcpdump
+
+LOGDIR=/usr/local/bin/dump-output
+# IP to watch for
+HOSTIP=IP.ADD.RES.HERE
+
+TCPDUMPLOG=tcpdumpOn${HOSTNAME}For${HOSTIP}.${DATE}.dmp
+
+TCPOUTPUTFILE=$LOGDIR/$TCPDUMPLOG
+
+#IFACE=bond0
+IFACE=any
+
+# kick of an tcpdump trace and send it to the background
+#nohup $TCPDUMP -i $IFACE host $HOSTIP -s 65535 -w $TCPOUTPUTFILE 2>&1 &
+nohup $TCPDUMP -i $IFACE host $HOSTIP -s0 -w $TCPOUTPUTFILE 2>&1 &
+#$TCPDUMP -i $IFACE host $HOSTIP -s0 -w $TCPOUTPUTFILE
+
