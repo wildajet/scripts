@@ -1,0 +1,144 @@
+#!/bin/bash
+#
+# script to create awstats conf files in /etc/awstats
+#set -x
+
+DATE=`date +%Y%m%d_%S`
+CDIR=`pwd`
+CONFDIR=/etc/awstats
+TEMPLATE=/etc/awstats/awstats.model.conf
+CONF=""
+DATADIR=""
+LOGFILE=""
+FQDN=""
+ALIASES=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+if [ -f /usr/local/bin/functions ]
+then
+  . /usr/local/bin/functions
+else
+  echo -e "\033[1;31m MISSING FUNCTIONS FILE /usr/local/bin/functions! \033[0m"
+  exit 1
+fi
+
+# make sure script was started by root or exit
+enforceRoot
+
+usage () {
+ # function to echo out the Usage
+ echo ""
+ echo "Usage: $0 [options] -c confFileName -d dataDir -l /path/logFile.log -f FQDN -a \"alias [... aliasN]\""
+ echo "         -c confFileName                 # i.e. awstats.NAME.DOMAIN.TLD-80.conf"
+ echo "         -d datadir                      # i.e. place to store the data files /var/www/awstats/stats/domain"
+ echo "         -l /full/path/logfile.log       # i.e. /var/log/httpd/box_name"
+ echo "         -f FQDN                         # i.e. NAME.DOMAIN.TLD"
+ echo "         -a \"alias [... aliasN]\"       # i.e. \"NAME.DOMAIN.TLD IP.AD.DR.ESS\""
+ echo "         -v verbose                      # default is off"
+ echo "         -h display this help message                              "
+ echo ""
+ echo " i.e. $SCRIPT -c awstats.NAME.DOMAIN.TLD-80.conf -l /var/log/httpd/box_name/NAME.DOMAIN.TLD-80.log -f NAME.DOMAIN.TLD -a \"NAME.DOMAIN.TLD IP.AD.DR.ESS\" -d /var/www/awstats/stats/NAME.DOMAIN.TLD"
+ echo ""
+}
+
+# determine the number of arguments passed in
+if [[ $# -lt 5 ]]; then
+ echo "wrong number of arguments, $# found needed 5, the arguments passed in were ,$@,"
+ usage
+ exit 1
+fi
+
+while getopts ":c:d:l:f:a:vh" options; do
+  case $options in
+    c ) CONF=$OPTARG;;
+    d ) DATADIR=$OPTARG;;
+    l ) LOGFILE=$OPTARG;;
+    f ) FQDN=$OPTARG;;
+    a ) ALIASES=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 2;;
+    * ) usage
+          exit 2;;
+  esac
+done
+
+# Conf file cannot be blank
+if [[ "$CONF" == "" ]]; then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE NAME OF THE CONFIGURATION FILE TO CREATE! -c CONFFILENAME \033[0m"
+  usage
+  exit 3;
+fi
+
+debug "Conf file is set to $CONF"
+
+# Conf file cannot be blank
+if [[ "$DATADIR" == "" ]]; then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE DATA DIR! -d DATADIR \033[0m"
+  usage
+  exit 4;
+else
+  # Make sure the DATADIR exists or create it
+  if [[ ! -d $DATADIR ]]
+  then
+    debug "DATDIR ,$DATADIR, doesn't exist creating it"
+    /bin/mkdir -p $DATADIR
+  fi
+  #make it so backslashes are escaped
+  DATADIR=${DATADIR//\//\\/}
+fi
+
+debug "data directory is set to $DATADIR"
+
+# Log file cannot be blank
+if [[ "$LOGFILE" == "" ]]; then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE LOG FILE! -l LOGFILE \033[0m"
+  usage
+  exit 5;
+else
+  #make it so backslashes are escaped
+  LOGFILE=${LOGFILE//\//\\/}
+fi
+
+debug "Log file is set to $LOGFILE"
+
+# FQDN cannot be blank
+if [[ "$FQDN" == "" ]]; then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE FQDN! -f FQDN \033[0m"
+  usage
+  exit 6;
+fi
+
+debug "FQDN is set to $FQDN"
+
+# ALIASES cannot be blank
+if [[ "$ALIASES" == "" ]]; then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE ALIASES! -a \"ALIAS...ALIASN\" \033[0m"
+  usage
+  exit 7;
+fi
+
+debug "ALIASES is set to $ALIASES"
+
+cd $CONFDIR
+
+debug "in $CONFDIR"
+debug "creating awstats configuration file $CONF, for your site $FQDN"
+
+# modify the default awstats config creating ours
+sed \
+ -e "s/^LogFile=.*$/LogFile=\"$LOGFILE\"/" \
+ -e "s/^SiteDomain=.*$/SiteDomain=\"$FQDN\"/" \
+ -e "s/^HostAliases=.*$/HostAliases=\"$ALIASES\"/" \
+ -e "s/^DirData=.*$/DirData=\"$DATADIR\"/" \
+    < $TEMPLATE > $CONF 
+
+echo ""
+echo -e "\033[1mAWSTATS configuration files has been created \033[0m\033[1;31m/etc/awstats/$CONF\033[0m\033[1m"
+echo
+echo -e "\033[1mYou may need to edit the configuration file. \033[0m\033[1m\033[0m"
+echo
+
