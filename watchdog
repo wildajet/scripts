@@ -1,0 +1,92 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+#       Script to make sure a process is running and if not restart it
+#
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+HOSTNAME=`/bin/hostname`
+GREP="/bin/grep"
+PS="/bin/ps"
+MAIL="/bin/mail"
+ECHO="/bin/echo"
+DIRNAME="/usr/bin/dirname"
+BASENAME="/bin/basename"
+
+GNAME=""
+SPATH=""
+FULLNAME=""
+PARAMS=""
+DEBUG="FALSE"
+SCRIPT=$0
+
+# source in the helper functions
+. /usr/local/bin/functions
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] -s SCRIPT"
+ echo "         -n SCRIPT                      # Name and full path the the script to watch"
+ echo "         -p STARTPEMS                   # Parameters to pass the the script to restart it"
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -n /usr/local/bin/update-mailstats.pl"
+ echo ""
+}
+
+# determine the name of the new apache instance
+if [[ $# < 1 ]]; then
+ usage
+ exit 1
+fi
+
+
+while getopts "n:p:vh" options; do
+  case $options in
+    n ) FULLNAME=$OPTARG;;
+    p ) PARAMS=$OPTARG;;
+    v ) DEBUG="TRUE";;
+    h ) usage;;
+    \? ) usage
+         exit 1;;
+    * ) usage
+          exit 1;;
+  esac
+done
+
+# name cannot be blank it is a required argument
+if [[ "$FULLNAME" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE FULL PATH and NAME of the PROCESS to GREP for! \033[0m"
+  usage
+  exit 1
+fi
+
+debug "FULLNAME is ,$FULLNAME,"
+
+GNAME=`$BASENAME $FULLNAME`
+debug "GNAME is ,$GNAME,"
+SPATH=`$DIRNAME $FULLNAME`
+debug "SPATH is ,$SPATH,"
+
+ISRUNNING=`$PS -ef | $GREP $GNAME | $GREP -v grep | $GREP -v $SCRIPT`
+debug "ISRUNNING is ,$ISRUNNING,"
+
+if [[ "$ISRUNNING" == "" ]]
+then
+  # the process isn't running we need to restart it
+  debug "need to restart the script"
+  $FULLNAME $PARAMS 2>&1 >/dev/null &
+  $ECHO -e "On $HOSTNAME @ `date` $FULLNAME was not running and has been restarted by $SCRIPT" | $MAIL -s "watchdog restarted $GNAME on $HOSTNAME @ `date`" root
+fi
