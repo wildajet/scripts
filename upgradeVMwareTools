@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+#  Script to upgrade the VMware tools on a VM
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+DEBUG="FALSE"
+SCRIPT=$0
+TOOLSFILE="VMwareTools.tgz"
+SATSERVER="https://SATSERVER.DOMAIN.TLD/pub"
+
+# source in the helper functions
+if [ -f /usr/local/bin/functions ]
+then
+  . /usr/local/bin/functions
+else
+  echo -e "\033[1;31m MISSING FUNCTIONS FILE /usr/local/bin/functions! \033[0m"
+  exit 1
+fi
+
+# make sure script was started by root or exit
+enforceRoot
+
+cd /tmp
+/usr/bin/wget --no-check-certificate $SATSERVER/$TOOLSFILE
+/bin/tar zxvf $TOOLSFILE
+cd vmware-tools-distrib
+./vmware-install.pl --default
+/usr/bin/vmware-config-tools.pl --default

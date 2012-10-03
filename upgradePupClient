@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# Author:               Jet Wilda <jet.wilda@gmail.com>
+# Modifed by:           Jet Wilda <jet.wilda@gmail.com>
+# Last Modified:        10/02/2012
+#
+# Description:
+#  Script to upgrade the puppet client software
+#
+
+DATE=`/bin/date +%Y%m%d`
+CDIR=`/bin/pwd`
+DEBUG="FALSE"
+SCRIPT=$0
+AFILE="answers.client.upgrade"
+LFILE="/tmp/puppetclient.upgrade.$DATE.log"
+SATSERVER="https://SATSERVER.DOMAIN.TLD/pub/puppet-enterprise.tgz"
+
+# source in the helper functions
+if [ -f /usr/local/bin/functions ]
+then
+  . /usr/local/bin/functions
+else
+  echo -e "\033[1;31m MISSING FUNCTIONS FILE /usr/local/bin/functions! \033[0m"
+  exit 1
+fi
+
+# make sure script was started by root or exit
+enforceRoot
+
+#usage directions
+usage () {
+ echo ""
+ echo "Usage: $SCRIPT [options] "
+ echo "         -a ANSWERS_FILE                # defaults to answers.client.upgrade "
+ echo "         -l LOG_FILE                    # defaults to /tmp/puppetclient.upgrade.DATE.log"
+ echo "         -v verbose (debug)             # default is off"
+ echo "         -h display this help message"
+ echo ""
+ echo " i.e. $SCRIPT -v"
+ echo ""
+}
+
+#echo "Number of arguments passed in is ,$#,"
+
+while getopts ":a:l:vh" options; do
+  case $options in
+    a ) AFILE=$OPTARG;;
+    l ) LFILE=$OPTARG;;
+    v ) setDebug "TRUE";;
+    h ) usage
+         exit 3;;
+    \? ) usage
+         exit 3;;
+    * ) usage
+          exit 3;;
+  esac
+done
+
+if [[ "$AFILE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE ANSWER FILE TO USE! \033[0m"
+  usage
+  exit 5
+fi
+debug "AFILE is ,$AFILE,"
+
+if [[ "$LFILE" == "" ]]
+then
+  echo -e "\033[1;31m YOU MUST SPECIFY THE LOG FILE TO USE! \033[0m"
+  usage
+  exit 5
+fi
+debug "LFILE is ,$LFILE,"
+
+cd /tmp
+debug "in directory ,`pwd`,"
+OLDDIR=$(ls /tmp/puppet-enterprise*)
+if [[ $OLDDIR ]]
+then
+  debug "about to ,rm -rf /tmp/puppet-enterprise*,"
+  /bin/rm -rf /tmp/puppet-enterprise*
+fi
+
+# GET the software
+debug "about to ,wget --no-check-certificate $SATSERVER,"
+/usr/bin/wget --no-check-certificate $SATSERVER
+
+debug "about to ,tar zxvf puppet-enterprise.tgz,"
+/bin/tar zxvf puppet-enterprise.tgz
+
+debug "about to ,cd puppet-enterprise*x86_64,"
+cd puppet-enterprise*x86_64
+
+# edit the answers file for this host
+#debug "about to ,sed -e s/MYNAME/`hostname`/g --in-place answers.master.upgrade,"
+#sed -e "s/MYNAME/`hostname`/g" --in-place answers.master.upgrade
+debug "about to ,sed -e s/MYNAME/`hostname`/g --in-place $AFILE,"
+/bin/sed -e "s/MYNAME/`hostname`/g" --in-place $AFILE
+
+# Run the upgrader
+debug "about to execute ,puppet-enterprise-upgrader -a $AFILE -l $LFILE, in ,`pwd`,"
+./puppet-enterprise-upgrader -a $AFILE -l $LFILE
+
